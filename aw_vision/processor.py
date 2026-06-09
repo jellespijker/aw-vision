@@ -190,6 +190,74 @@ class BulkProcessor:
                 print(err_msg)
             return ""
 
+    def optimize_image(self, img_path: Path, rec_id: str, max_size: int = 1200):
+        """Resize image to a maximum dimension of max_size maintaining aspect ratio, saving disk space and speeding up vision/OCR models."""
+        if not img_path.exists():
+            return
+        try:
+            from PIL import Image
+            with Image.open(img_path) as img:
+                width, height = img.size
+                if max(width, height) <= max_size:
+                    return
+
+                self.log_step(rec_id, f"Optimizing screenshot dimensions (original: {width}x{height}) to max {max_size}px...")
+                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                img.save(img_path, "PNG", optimize=True)
+                new_width, new_height = img.size
+                self.log_step(rec_id, f"Screenshot successfully optimized to {new_width}x{new_height}.")
+        except Exception as e:
+            self.log_step(rec_id, f"Warning: Could not optimize screenshot {img_path.name}: {e}")
+
+    def send_to_aw_server(self, record: dict, rec_id: str):
+        """Send the processed screenshot metadata as an event to aw-server."""
+        import socket
+        try:
+            hostname = socket.gethostname()
+            bucket_id = f"aw-vision-processed_{hostname}"
+
+            # Ensure bucket exists (aw-server handles 304 or 200)
+            url_create = f"http://localhost:5600/api/0/buckets/{bucket_id}"
+            create_payload = {
+                "client": "aw-vision",
+                "type": "vision-processed",
+                "hostname": hostname
+            }
+            try:
+                requests.post(url_create, json=create_payload, timeout=2.0)
+            except Exception as e:
+                self.log_step(rec_id, f"Warning: Could not create/verify aw-server bucket: {e}")
+                return
+
+            # Convert timestamp to ISO 8601 string in UTC
+            from datetime import datetime, timezone
+            ts = record.get("timestamp", time.time())
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            now_iso = dt.isoformat()
+
+            # Formulate event payload
+            event = {
+                "timestamp": now_iso,
+                "duration": float(config.screenshot_interval),
+                "data": {
+                    "id": record["id"],
+                    "app": record["app_name"],
+                    "title": record["window_title"],
+                    "description": record["description"],
+                    "tags": record["tags"],
+                    "project_number": record["project_number"] or "None"
+                }
+            }
+
+            url_events = f"http://localhost:5600/api/0/buckets/{bucket_id}/events"
+            resp = requests.post(url_events, json=[event], timeout=2.0)
+            if resp.status_code == 200:
+                self.log_step(rec_id, "Successfully mirrored processed event to aw-server bucket.")
+            else:
+                self.log_step(rec_id, f"Warning: Failed to mirror event to aw-server (Status {resp.status_code}): {resp.text}")
+        except Exception as e:
+            self.log_step(rec_id, f"Warning: Error sending event to aw-server: {e}")
+
     def run_retention_cleanup(self):
         """Scan database for expired records, delete their screenshot files, and set image_path to None."""
         try:
@@ -298,6 +366,14 @@ class BulkProcessor:
             self.log_step(rec_id, f"Initializing processing for screenshot: {img_path.name}")
             self.log_step(rec_id, f"App: {app_name}, Window: {window_title[:40]}")
 
+            # Optimize screenshots before running OCR/Vision to save disk, memory, and improve model performance
+            full_img_filename = f"{img_path.stem}_full.png"
+            full_img_path = img_path.parent / full_img_filename
+
+            self.optimize_image(img_path, rec_id, max_size=1200)
+            if full_img_path.exists():
+                self.optimize_image(full_img_path, rec_id, max_size=1200)
+
             # 1. Run OCR extraction
             ocr_text = self.extract_ocr_text(img_path, rec_id)
 
@@ -311,30 +387,41 @@ class BulkProcessor:
 
             # Prompt for Ollama vision model
             prompt_text = f"""
-You are an advanced automated time-tracking and productivity classification assistant.
-Analyze the provided screenshot of the user's desktop screen and combine it with this metadata context:
+### USER METADATA CONTEXT
 - Active Application: {app_name}
 - Active Window Title: {window_title}
-- Extracted Screen Text (OCR): {ocr_text}
+- Extracted Screen Text (OCR):
+---
+{ocr_text}
+---
 
-We also have a list of active work projects:
+### PROJECT REFERENCE CATALOG
+Below is the list of active work projects you can match against:
 {projects_str}
 
-We have a list of existing tags in our system:
-{existing_tags}
+### SYSTEM INSTRUCTIONS & CLASSIFICATION RULES
+You are a highly precise automated time-tracking and productivity classification assistant. Your task is to analyze the user's desktop screenshot alongside the provided metadata context and categorize their work.
 
-Analyze the screenshot carefully to identify what the user is working on, the topic, visible text, code, or browser content.
-Follow these context-specific rules for your analysis to be less generic:
-1. **Jira, GitLab, or Kanban Boards**: Identify specific ticket numbers (e.g., "PRJ-2026-042" or similar), column names (To Do, In Progress, Done), ticket types (bug, feature, task, discussion), and their specific content.
-2. **Chats (Slack, Teams, Discord, etc.)**: Note the conversation partner's name or channel and the specific topic/matter being discussed.
-3. **IDE or Coding (VS Code, Cursor, terminal, etc.)**: Identify the programming language, files open, functions or classes being written, and any bugs/errors shown.
+Follow these strict rules:
+1. **Description Generation**:
+   - Provide a highly detailed, objective, and granular description of the active window and task.
+   - Specify exactly what is being viewed or worked on (e.g., specific file names, code functions, browser URLs, searched keywords, active spreadsheet columns, or chat messages).
+   - If the user is on a website like LinkedIn, GitHub, or Youtube, specify the exact profile, issue, repository, channel, or video being viewed.
+   - Do NOT talk about the user's background or general projects unless there is direct evidence of it being the active task on the screen.
+   - Ignore irrelevant sidebar elements like Chrome bookmarks, adjacent browser tabs, or inactive chat lists unless they are the direct subject.
 
-Generate a JSON object containing:
-1. "description": A highly detailed, granular single-paragraph description of the active task, specific content, website URLs, search terms, code structure, or topic. Include ticket numbers, chat partners, file names, or languages if present.
-2. "tags": A list of 3 to 7 relevant tags/keywords (e.g. ["python", "vector-db", "welding", "woodworking", "research"]). REUSE existing tags from the list provided above whenever they are a good match. Only generate a brand new tag if none of the existing tags accurately represent the work.
-3. "project_number": Choose the project_number from the active work projects list that fits this activity based on its description and work entailment. If none of the projects are a fit, output "None". Be conservative: only match if the screenshot content and window context strongly correlate with the project description.
+2. **Project Matching**:
+   - Compare the active window content and OCR text against the PROJECT REFERENCE CATALOG above.
+   - **CRITICAL**: Be extremely conservative and precise when matching projects. If there is no strong, explicit, and direct evidence correlating the active screen contents to a project's description/entailment, you MUST output "None".
+   - Do NOT match a project just because the word or name appears in an inactive sidebar chat title, adjacent tab name, or browser bookmark.
+   - Do NOT assume that external company profiles (like LinkedIn company pages or news articles) are related to the user's active development projects. For example, viewing a generic LinkedIn page should map to "None" or a general management/business category, never a specific local research or R&D project (like NGP Research) unless they are directly editing that project's architecture.
 
-You MUST respond in valid JSON format.
+3. **Tag Generation**:
+   - Return 3 to 7 highly relevant, technical tags or keywords representing the current task (e.g., ["react", "api-integration", "customer-outreach", "documentation", "system-diagnostic"]).
+   - Re-use tags from this list of existing tags whenever possible to keep the database consistent: {existing_tags}
+   - Only generate a new tag if none of the existing ones fit the specific technical domain.
+
+You MUST respond in valid JSON format matching the schema below. Do not include any markdown wrapper outside of the JSON output.
 JSON Schema:
 {{
   "description": "string",
@@ -396,6 +483,9 @@ JSON Schema:
             # Insert into database
             self.log_step(rec_id, "Committing record to local LanceDB database...")
             db.insert_screenshot(db_record)
+
+            # Mirror metadata to aw-server processed bucket
+            self.send_to_aw_server(db_record, rec_id)
 
             # Move image & metadata to processed directory
             self.log_step(rec_id, "Archiving screenshots and clearing temporary ingestion files...")
