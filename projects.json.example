@@ -1,0 +1,14 @@
+[
+  {
+    "project_number": "PRJ-2026-042",
+    "description": "Integratie van lokale vision-modellen in ActivityWatch pipelines",
+    "work_entailment": "Python-ontwikkeling, API-koppelingen bouwen, CUDA/vLLM optimalisatie en prompt engineering.",
+    "tracked_hours": 0.0
+  },
+  {
+    "project_number": "PRJ-2026-089",
+    "description": "Onderhoud en herstel van historische houten constructies",
+    "work_entailment": "CAD-tekenen, constructieberekeningen, inkoopdocumentatie en materiaalkeuze voor renovatie.",
+    "tracked_hours": 0.0
+  }
+]
