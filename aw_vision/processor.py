@@ -191,6 +191,35 @@ class BulkProcessor:
                 print(err_msg)
             return ""
 
+    def summarize_ocr_text(self, ocr_text: str, max_chars: int = 1200) -> str:
+        """Pre-process and truncate OCR text to fit within vision model context window constraints."""
+        if not ocr_text:
+            return ""
+
+        # Filter empty lines and strip whitespace
+        lines = [line.strip() for line in ocr_text.split("\n") if line.strip()]
+
+        # Remove duplicate consecutive or highly repetitive lines to clean up OCR noise
+        unique_lines = []
+        seen = set()
+        for line_str in lines:
+            norm = line_str.lower()
+            if norm not in seen:
+                seen.add(norm)
+                unique_lines.append(line_str)
+
+        cleaned_text = "\n".join(unique_lines)
+        if len(cleaned_text) <= max_chars:
+            return cleaned_text
+
+        # Truncate and append truncation message
+        truncated = cleaned_text[:max_chars]
+        last_nl = truncated.rfind("\n")
+        if last_nl > max_chars // 2:
+            truncated = truncated[:last_nl]
+
+        return truncated + f"\n... [OCR Text truncated from {len(ocr_text)} to {len(truncated)} chars for LLM context window safety]"
+
     def optimize_image(self, img_path: Path, rec_id: str, max_size: int = 1200):
         """Resize image to a maximum dimension of max_size maintaining aspect ratio, saving disk space and speeding up vision/OCR models."""
         if not img_path.exists():
@@ -364,6 +393,7 @@ class BulkProcessor:
         if not batch_items:
             return False
 
+        failed_ids = set()
         N = len(batch_items)
         print(f"[{datetime.now()}] Batch-processing {N} screenshots in staged sweeps...")
 
@@ -465,13 +495,16 @@ class BulkProcessor:
                     else:
                         app_freq_str = f"  * No historical project associations for '{app_name}'."
 
+                    raw_ocr = meta.get("ocr_text", "")
+                    truncated_ocr = self.summarize_ocr_text(raw_ocr, max_chars=1200)
+
                     prompt_text = f"""
 ### USER METADATA CONTEXT
 - Active Application: {app_name}
 - Active Window Title: {meta.get('window_title', 'Unknown')}
 - Extracted Focused Screen Text (OCR):
 ---
-{meta.get('ocr_text', '')}
+{truncated_ocr}
 ---
 
 ### ADDITIONAL ACTIVITYWATCH BUCKET STATES
@@ -562,7 +595,7 @@ JSON Schema:
                         model=config.vision_model,
                         messages=[{"role": "user", "content": prompt_text, "images": images_payload}],
                         format="json",
-                        options={"temperature": 0.2},
+                        options={"temperature": 0.2, "num_ctx": 8192},
                         keep_alive=keep_alive,
                     )
 
@@ -581,6 +614,7 @@ JSON Schema:
                     self.log_step(rec_id, "Vision analysis results already cached in metadata. Skipping vision model.")
             except Exception as e:
                 self.log_step(rec_id, f"Error in Phase 2 (Vision) for {img_path.name}: {e}")
+                failed_ids.add(rec_id)
 
         # -------------------------------------------------------------
         # Phase 3: Embeddings & DB Commit Sweep
@@ -588,6 +622,10 @@ JSON Schema:
         success_count = 0
         for idx, (img_path, meta_path, rec_id, meta) in enumerate(batch_items):
             try:
+                if rec_id in failed_ids:
+                    self.log_step(rec_id, "Skipping Phase 3/3 due to previous failures in Phase 2.")
+                    continue
+
                 self.log_step(rec_id, f"Phase 3/3: Embedding calculation, DB commit & Cleanup (item {idx + 1}/{N} in batch)")
 
                 description = meta.get("description", "No description generated.")
