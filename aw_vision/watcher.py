@@ -116,8 +116,41 @@ class ScreenshotWatcher:
                     if a_resp.status_code == 200:
                         events = a_resp.json()
                         if events:
-                            data = events[0].get("data", {})
-                            is_afk = data.get("status") == "afk"
+                            event = events[0]
+                            data = event.get("data", {})
+                            status = data.get("status")
+                            if status == "afk":
+                                is_afk = True
+                            else:
+                                # Check if the last active heartbeat is stale (older than 3 minutes)
+                                try:
+                                    from datetime import timezone
+                                    ts_str = event.get("timestamp")
+                                    dur = event.get("duration", 0.0)
+
+                                    # Parse RFC3339 timestamp robustly
+                                    if ts_str.endswith("Z"):
+                                        ts_str = ts_str[:-1] + "+00:00"
+                                    if "." in ts_str:
+                                        base, tz = ts_str.split("+")
+                                        main, frac = base.split(".")
+                                        frac = frac[:6]
+                                        ts_str = f"{main}.{frac}+{tz}"
+
+                                    event_time = datetime.fromisoformat(ts_str)
+                                    current_time = datetime.now(timezone.utc)
+
+                                    # Add duration to find the end of the last active event
+                                    from datetime import timedelta
+                                    last_active_end = event_time + timedelta(seconds=dur)
+
+                                    # Default AFK timeout is 3 minutes (180.0 seconds)
+                                    elapsed = (current_time - last_active_end).total_seconds()
+                                    if elapsed > 180.0:
+                                        is_afk = True
+                                        print(f"[{datetime.now()}] Warning: Last active event is stale by {elapsed:.1f}s. Considering user AFK.")
+                                except Exception as err:
+                                    print(f"Error checking AFK event staledness: {err}")
 
                 # Fetch other custom watcher buckets context for extra details (e.g. Chrome, IDE editors)
                 for bid in buckets.keys():
