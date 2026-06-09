@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 
 import lancedb
 import pyarrow as pa
@@ -26,13 +27,13 @@ class VisionDB:
         try:
             url = f"{config.ollama_host}/api/embeddings"
             payload = {"model": config.embedding_model, "prompt": "hello"}
-            resp = requests.post(url, json=payload, timeout=3.0)
+            resp = requests.post(url, json=payload, timeout=15.0)
             if resp.status_code == 200:
                 emb = resp.json().get("embedding", [])
                 if emb:
                     return len(emb)
         except Exception as e:
-            print(f"Warning: Could not query Ollama to determine embedding size ({e}). Defaulting to 1024.")
+            print(f"Warning: Could not query Ollama to determine embedding size ({e}). Defaulting to 768.")
 
         # Fallback dimensions depending on common models
         model = config.embedding_model.lower()
@@ -41,9 +42,9 @@ class VisionDB:
         elif "minilm" in model:
             return 384
         elif "gemma" in model:
-            # embeddinggemma or similar
-            return 1024
-        return 1024
+            # embeddinggemma is 768
+            return 768
+        return 768
 
     def get_schema(self, dim: int) -> pa.Schema:
         """Create PyArrow schema with the dynamic vector dimension."""
@@ -63,24 +64,34 @@ class VisionDB:
             ]
         )
 
-    def _migrate_schema_if_needed(self, db_conn):
-        print("MIGRATION: Evolving LanceDB schema to support nullable image_path and ocr_text...")
+    def _migrate_schema_if_needed(self, db_conn, active_dim: Optional[int] = None):
+        print("MIGRATION: Evolving LanceDB schema and updating record layouts...")
         try:
             tbl = db_conn.open_table(self.table_name)
             # 1. Load existing records via Arrow to avoid Pandas NaN float conversion issues
             pyarrow_table = tbl.to_arrow()
             records = pyarrow_table.to_pylist()
 
-            # 2. Add 'ocr_text' column initialized to None for each record if not present
+            # Determine target dimension
+            dim = active_dim if active_dim is not None else self.get_embedding_dimension()
+
+            # 2. Update 'ocr_text' and vector dimension for each record if needed
             for rec in records:
                 if "ocr_text" not in rec:
                     rec["ocr_text"] = None
+
+                # Check and normalize vector dimension
+                vec = rec.get("vector")
+                if vec is not None:
+                    if len(vec) < dim:
+                        rec["vector"] = vec + [0.0] * (dim - len(vec))
+                    elif len(vec) > dim:
+                        rec["vector"] = vec[:dim]
 
             # 3. Drop old table
             db_conn.drop_table(self.table_name)
 
             # 4. Recreate table with new schema
-            dim = self.get_embedding_dimension()
             evolved_schema = self.get_schema(dim)
             new_tbl = db_conn.create_table(self.table_name, schema=evolved_schema)
 
@@ -88,8 +99,10 @@ class VisionDB:
             if records:
                 new_tbl.add(records)
             self._table = new_tbl
-            print("MIGRATION: Schema successfully migrated with all existing records preserved.")
+            print(f"MIGRATION: Schema successfully migrated to vector size {dim} with {len(records)} existing records preserved.")
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"Error during LanceDB schema migration: {e}")
             # Fallback to reopen the old table to avoid breaking startup
             self._table = db_conn.open_table(self.table_name)
@@ -101,8 +114,17 @@ class VisionDB:
             if self.table_name in db_conn.table_names():
                 tbl = db_conn.open_table(self.table_name)
                 schema = tbl.schema
-                if "ocr_text" not in schema.names:
-                    self._migrate_schema_if_needed(db_conn)
+
+                # Get dimensions
+                try:
+                    table_dim = schema.field("vector").type.list_size
+                except Exception:
+                    table_dim = 768
+
+                active_dim = self.get_embedding_dimension()
+
+                if "ocr_text" not in schema.names or table_dim != active_dim:
+                    self._migrate_schema_if_needed(db_conn, active_dim=active_dim)
                 else:
                     self._table = tbl
             else:

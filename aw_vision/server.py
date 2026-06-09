@@ -73,7 +73,10 @@ class ProjectModel(BaseModel):
 
 @app.get("/api/status")
 def get_status():
-    """Get system health and background daemon queue sizes."""
+    """Get system health, background daemon statuses, and verify active external dependencies (aw-server, Ollama, Capture CLI)."""
+    import shutil
+    import requests
+
     try:
         pending_count = len(processor.get_pending_queue())
     except Exception:
@@ -84,6 +87,29 @@ def get_status():
     except Exception:
         total_records = 0
 
+    # Check if aw-server is online on port 5600
+    aw_server_online = False
+    try:
+        resp = requests.get("http://127.0.0.1:5600/api/0/about", timeout=1.0)
+        if resp.status_code == 200:
+            aw_server_online = True
+    except Exception:
+        pass
+
+    # Check if Ollama is online
+    ollama_online = False
+    try:
+        resp = requests.get(f"{config.ollama_host}/api/tags", timeout=1.0)
+        if resp.status_code == 200:
+            ollama_online = True
+    except Exception:
+        pass
+
+    # Check if capture tools are on system PATH
+    spectacle_available = bool(shutil.which("spectacle"))
+    grim_available = bool(shutil.which("grim"))
+    capture_cli_available = spectacle_available or grim_available
+
     return {
         "watcher_running": watcher.running,
         "processor_running": processor.running,
@@ -93,6 +119,13 @@ def get_status():
             "cpu_percent": psutil.cpu_percent(),
             "memory_percent": psutil.virtual_memory().percent,
         },
+        "aw_server_online": aw_server_online,
+        "ollama_online": ollama_online,
+        "capture_cli_available": capture_cli_available,
+        "capture_cli_details": {
+            "spectacle": spectacle_available,
+            "grim": grim_available,
+        }
     }
 
 
@@ -386,6 +419,7 @@ def process_single_screenshot(file_id: str):
             "tags": record.get("tags", []),
             "project_number": record.get("project_number"),
             "is_processed": True,
+            "logs": processor.processing_logs.get(file_id, []),
         }
     except HTTPException:
         raise
@@ -393,6 +427,32 @@ def process_single_screenshot(file_id: str):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error force processing: {e}")
+
+
+@app.get("/api/process/{file_id}/logs")
+def get_processing_logs(file_id: str):
+    """Retrieve the real-time processing logs for a specific screenshot, falling back to disk log files."""
+    logs = processor.processing_logs.get(file_id, [])
+    if not logs:
+        # Check raw first
+        raw_log = config.screenshots_dir / "raw" / f"{file_id}.log"
+        if raw_log.exists():
+            try:
+                with open(raw_log, "r", encoding="utf-8") as lf:
+                    logs = lf.read().splitlines()
+            except Exception:
+                pass
+
+        # Then check processed
+        if not logs:
+            processed_log = config.screenshots_dir / "processed" / f"{file_id}.log"
+            if processed_log.exists():
+                try:
+                    with open(processed_log, "r", encoding="utf-8") as lf:
+                        logs = lf.read().splitlines()
+                except Exception:
+                    pass
+    return {"id": file_id, "logs": logs}
 
 
 @app.post("/api/process-all")
