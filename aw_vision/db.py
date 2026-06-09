@@ -60,6 +60,7 @@ class VisionDB:
                 pa.field("ocr_text", pa.string(), nullable=True),
                 pa.field("tags", pa.list_(pa.string()), nullable=True),
                 pa.field("project_number", pa.string(), nullable=True),
+                pa.field("human_labeled", pa.bool_(), nullable=True),
                 pa.field("vector", pa.list_(pa.float32(), dim), nullable=False),
             ]
         )
@@ -75,10 +76,12 @@ class VisionDB:
             # Determine target dimension
             dim = active_dim if active_dim is not None else self.get_embedding_dimension()
 
-            # 2. Update 'ocr_text' and vector dimension for each record if needed
+            # 2. Update 'ocr_text', 'human_labeled', and vector dimension for each record if needed
             for rec in records:
                 if "ocr_text" not in rec:
                     rec["ocr_text"] = None
+                if "human_labeled" not in rec:
+                    rec["human_labeled"] = False
 
                 # Check and normalize vector dimension
                 vec = rec.get("vector")
@@ -123,7 +126,7 @@ class VisionDB:
 
                 active_dim = self.get_embedding_dimension()
 
-                if "ocr_text" not in schema.names or table_dim != active_dim:
+                if "ocr_text" not in schema.names or "human_labeled" not in schema.names or table_dim != active_dim:
                     self._migrate_schema_if_needed(db_conn, active_dim=active_dim)
                 else:
                     self._table = tbl
@@ -239,6 +242,108 @@ class VisionDB:
             print(f"Set image_path = None for record {record_id}")
         except Exception as e:
             print(f"Error nullifying expired screenshot path for {record_id}: {e}")
+
+    def update_project_label(self, record_id: str, project_number: Optional[str], human_labeled: bool = True):
+        """Update the project number and human_labeled flag for a specific record."""
+        try:
+            self.table.update(
+                where=f"id = '{record_id}'",
+                values={"project_number": project_number, "human_labeled": human_labeled}
+            )
+            print(f"Updated project_number to '{project_number}' and human_labeled to {human_labeled} for record {record_id}")
+        except Exception as e:
+            print(f"Error updating project label for record {record_id}: {e}")
+            raise e
+
+    def get_past_neighbor(self, timestamp: float) -> dict | None:
+        """Get the closest snapshot record immediately preceding the given timestamp."""
+        try:
+            results = self.query_metadata(f"timestamp < {timestamp}", limit=1)
+            return results[0] if results else None
+        except Exception as e:
+            print(f"Error fetching past neighbor for {timestamp}: {e}")
+            return None
+
+    def get_future_neighbor(self, timestamp: float) -> dict | None:
+        """Get the closest snapshot record immediately succeeding the given timestamp."""
+        try:
+            tbl = self.table
+            results = tbl.search().where(f"timestamp > {timestamp}").limit(100000).to_list()
+            results.sort(key=lambda x: x.get("timestamp", 0.0), reverse=False)
+            return results[0] if results else None
+        except Exception as e:
+            print(f"Error fetching future neighbor for {timestamp}: {e}")
+            return None
+
+    def get_app_project_frequencies(self, app_name: str) -> dict[str, float]:
+        """Get project numbers associated with an app_name, with weights (human_labeled = 5.0, auto = 1.0)."""
+        if not app_name:
+            return {}
+        try:
+            escaped_app = app_name.replace("'", "''")
+            records = self.query_metadata(f"app_name = '{escaped_app}'", limit=100)
+
+            freqs = {}
+            for r in records:
+                proj = r.get("project_number")
+                if not proj:
+                    continue
+                weight = 5.0 if r.get("human_labeled") else 1.0
+                freqs[proj] = freqs.get(proj, 0.0) + weight
+            return freqs
+        except Exception as e:
+            print(f"Error querying app project frequencies for '{app_name}': {e}")
+            return {}
+
+    def get_similar_labeled_snapshots(self, vector: list[float], tags: list[str] = None, app_name: str = None, limit: int = 10) -> list[dict]:
+        """Perform a semantic vector similarity search and filter/boost based on human_labeled status and tags."""
+        try:
+            # Step 1: Run semantic search in LanceDB
+            raw_results = self.search_semantic(vector, limit=20)
+
+            processed_results = []
+            for r in raw_results:
+                proj = r.get("project_number")
+                if not proj:
+                    continue
+
+                # Base similarity calculation from distance
+                dist = r.get("_distance", 1.0)
+                sim = 1.0 / (1.0 + dist)
+
+                score = sim
+                # Human labeled boost (5x multiplier)
+                is_human = bool(r.get("human_labeled", False))
+                if is_human:
+                    score *= 5.0
+
+                # Common tags bonus
+                r_tags = r.get("tags") or []
+                if tags and r_tags:
+                    common = set(tags).intersection(set(r_tags))
+                    score += 0.2 * len(common)
+
+                # Same app bonus
+                if app_name and r.get("app_name") == app_name:
+                    score += 0.3
+
+                processed_results.append({
+                    "id": r.get("id"),
+                    "project_number": proj,
+                    "score": score,
+                    "human_labeled": is_human,
+                    "description": r.get("description"),
+                    "window_title": r.get("window_title"),
+                    "app_name": r.get("app_name"),
+                    "tags": r_tags,
+                })
+
+            # Sort by total calculated score descending
+            processed_results.sort(key=lambda x: x["score"], reverse=True)
+            return processed_results[:limit]
+        except Exception as e:
+            print(f"Error scoring similar labeled snapshots: {e}")
+            return []
 
 
 db = VisionDB()

@@ -80,6 +80,7 @@ interface HistoryRecord {
   project_number: string | null
   distance?: number
   is_processed?: boolean
+  human_labeled?: boolean
 }
 
 interface Project {
@@ -321,6 +322,48 @@ export default function App() {
       setToastMessage({ text: `Failed to save: Invalid JSON or API error. (${e.message})`, type: 'danger' })
     } finally {
       setSavingProjects(false)
+    }
+  }
+
+  const handleUpdateLabel = async (recordId: string, projectNumber: string | null) => {
+    if (!serverOnline) return
+    try {
+      const resp = await axios.post(`/api/snapshots/${recordId}/label`, {
+        project_number: projectNumber
+      })
+      if (resp.status === 200) {
+        setToastMessage({ text: 'Project label updated successfully!', type: 'success' })
+        
+        // Update in-place to avoid page refresh or scroll reset
+        setHistoryRecords(prev => prev.map(rec => {
+          if (rec.id === recordId) {
+            return {
+              ...rec,
+              project_number: projectNumber,
+              human_labeled: true
+            }
+          }
+          return rec
+        }))
+
+        // Also update selectedRecord if it's currently selected in lightbox
+        setSelectedRecord(prev => {
+          if (prev && prev.id === recordId) {
+            return {
+              ...prev,
+              project_number: projectNumber,
+              human_labeled: true
+            }
+          }
+          return prev
+        })
+
+        // Refresh project list to update tracked_hours breakdown
+        fetchProjects()
+      }
+    } catch (e: any) {
+      const errMsg = e.response?.data?.detail || e.message || 'Error occurred'
+      setToastMessage({ text: `Failed to update project label: ${errMsg}`, type: 'danger' })
     }
   }
 
@@ -953,10 +996,30 @@ export default function App() {
                             {formatTimestamp(rec.timestamp)}
                           </span>
 
-                          {rec.project_number && (
-                            <span className="absolute top-2 left-2 bg-primary-container text-white text-[10px] font-semibold px-2.5 py-1 rounded">
-                              {rec.project_number}
-                            </span>
+                          {rec.is_processed && (
+                            <div className="absolute top-2 left-2 z-10 flex items-center gap-1 bg-white/95 border border-surface-container-high px-2 py-1 rounded select-none font-messina" onClick={(e) => e.stopPropagation()}>
+                              {rec.human_labeled && (
+                                <div className="flex items-center gap-0.5 text-primary font-bold text-[9px] uppercase tracking-wider pr-1.5 border-r border-surface-container-high" title="Manually Verified Project Label">
+                                  <User className="w-3 h-3 text-primary-container" />
+                                  <span>Verified</span>
+                                </div>
+                              )}
+                              <select
+                                value={rec.project_number || 'None'}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  handleUpdateLabel(rec.id, val === 'None' ? null : val);
+                                }}
+                                className="bg-transparent text-[10px] font-semibold text-neutral-dark outline-none cursor-pointer border-0 p-0 pr-1 select-none"
+                              >
+                                <option value="None">Unclassified</option>
+                                {projectsList.filter(p => p.project_number !== 'Unclassified').map(proj => (
+                                  <option key={proj.project_number} value={proj.project_number}>
+                                    {proj.project_number}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                           )}
 
                           {rec.distance !== undefined && (
@@ -1236,9 +1299,35 @@ export default function App() {
               <div className="p-5 md:p-6 space-y-4 max-h-[220px] overflow-y-auto bg-white text-neutral-dark">
                 <div className="flex flex-wrap items-center justify-between gap-3 text-technical-sm">
                   <div className="flex items-center gap-2">
-                    <span className="bg-primary-container text-white font-semibold px-3 py-1 rounded">
-                      {selectedRecord.project_number || 'Unclassified'}
-                    </span>
+                    {selectedRecord.is_processed ? (
+                      <div className="flex items-center gap-1.5 bg-surface-container-low border border-surface-container-high px-2.5 py-1 rounded font-messina">
+                        {selectedRecord.human_labeled && (
+                          <div className="flex items-center gap-1 text-primary font-bold text-[10px] uppercase tracking-wider pr-1.5 border-r border-surface-container-high" title="Manually Verified Project Label">
+                            <User className="w-3.5 h-3.5 text-primary-container" />
+                            <span>Verified</span>
+                          </div>
+                        )}
+                        <select
+                          value={selectedRecord.project_number || 'None'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            handleUpdateLabel(selectedRecord.id, val === 'None' ? null : val);
+                          }}
+                          className="bg-transparent text-[11px] font-semibold text-neutral-dark outline-none cursor-pointer border-0 p-0 pr-1"
+                        >
+                          <option value="None">Unclassified</option>
+                          {projectsList.filter(p => p.project_number !== 'Unclassified').map(proj => (
+                            <option key={proj.project_number} value={proj.project_number}>
+                              {proj.project_number}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <span className="bg-surface-container-low text-text-secondary font-semibold px-2.5 py-1 rounded border border-surface-container-high">
+                        Pending classification
+                      </span>
+                    )}
                     <span className="bg-surface-container-low text-text-secondary font-semibold px-2.5 py-1 rounded border border-surface-container-high">
                       {selectedRecord.app_name}
                     </span>

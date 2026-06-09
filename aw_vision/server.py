@@ -66,6 +66,10 @@ class ProjectModel(BaseModel):
     work_entailment: str
 
 
+class LabelRequest(BaseModel):
+    project_number: Optional[str] = None
+
+
 # ---------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------
@@ -261,6 +265,7 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
                         "ocr_text": None,
                         "tags": [],
                         "project_number": None,
+                        "human_labeled": False,
                         "is_processed": False,
                     })
                 except Exception as e:
@@ -299,6 +304,7 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
                 "ocr_text": r.get("ocr_text"),
                 "tags": r.get("tags", []),
                 "project_number": r.get("project_number"),
+                "human_labeled": bool(r.get("human_labeled", False)),
                 "is_processed": True,
                 "distance": r.get("_distance"),  # Only present on semantic searches
             })
@@ -418,6 +424,7 @@ def process_single_screenshot(file_id: str):
             "ocr_text": record.get("ocr_text"),
             "tags": record.get("tags", []),
             "project_number": record.get("project_number"),
+            "human_labeled": bool(record.get("human_labeled", False)),
             "is_processed": True,
             "logs": processor.processing_logs.get(file_id, []),
         }
@@ -427,6 +434,52 @@ def process_single_screenshot(file_id: str):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error force processing: {e}")
+
+
+@app.post("/api/snapshots/{record_id}/label")
+def update_snapshot_label(record_id: str, payload: LabelRequest):
+    """Manually assign, update, or remove a project label on any processed desktop snapshot."""
+    try:
+        record = db.get_record_by_id(record_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Snapshot record not found in database.")
+
+        proj_num = payload.project_number
+        if proj_num:
+            proj_num = proj_num.strip()
+            if proj_num == "" or proj_num.lower() in ("none", "unclassified"):
+                proj_num = None
+
+        db.update_project_label(record_id, proj_num, human_labeled=True)
+        updated = db.get_record_by_id(record_id)
+
+        if updated:
+            image_path_val = updated.get("image_path")
+            db_record = {
+                "id": updated.get("id"),
+                "timestamp": updated.get("timestamp"),
+                "image_path": image_path_val,
+                "window_title": updated.get("window_title"),
+                "app_name": updated.get("app_name"),
+                "is_afk": bool(updated.get("is_afk", False)),
+                "description": updated.get("description"),
+                "ocr_text": updated.get("ocr_text"),
+                "tags": updated.get("tags", []),
+                "project_number": proj_num,
+                "human_labeled": True,
+            }
+            processor.send_to_aw_server(db_record, record_id)
+
+        return {
+            "status": "success",
+            "message": f"Successfully updated project label for snapshot {record_id} to '{proj_num}' (human_labeled=True).",
+            "project_number": proj_num,
+            "human_labeled": True
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update project label: {e}")
 
 
 @app.get("/api/process/{file_id}/logs")

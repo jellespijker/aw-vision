@@ -134,9 +134,49 @@ def tool_query_jira(jql: str) -> str:
     return f"Jira Search for '{jql}':\n- Found 0 matching issues in current local context."
 
 
+def tool_get_similar_labeled_snapshots(query: str, limit: int = 5) -> str:
+    """Search the database for similar labeled snapshots. This tool scores results by favoring manually/human labeled data and matching tags/app names."""
+    try:
+        # Step 1: Embed query via Ollama
+        url = f"{config.ollama_host}/api/embeddings"
+        payload = {"model": config.embedding_model, "prompt": query, "keep_alive": 0}
+        resp = requests.post(url, json=payload, timeout=30.0)
+        if resp.status_code != 200:
+            return f"Error embedding query: {resp.text}"
+
+        query_vector = resp.json().get("embedding", [])
+        if not query_vector:
+            return "Error: Empty embedding returned."
+
+        words = [w.strip().lower() for w in re.split(r'\s+', query) if w.strip()]
+
+        # Step 2: Query LanceDB using the advanced labeled scoring helper
+        results = db.get_similar_labeled_snapshots(query_vector, tags=words, limit=limit)
+        if not results:
+            return "No matching labeled screenshots or active screens found."
+
+        # Step 3: Format results
+        output = []
+        for r in results:
+            is_human = "Yes (Verified)" if r.get("human_labeled") else "No (Auto)"
+            tags_str = ", ".join(r.get("tags", []))
+            output.append(
+                f"--- Similar Labeled Result (Score: {r.get('score', 0.0):.2f}) ---\n"
+                f"Project Assigned: {r.get('project_number')}\n"
+                f"Human Verified Label: {is_human}\n"
+                f"App: {r.get('app_name')} | Window: {r.get('window_title')}\n"
+                f"Description: {r.get('description')}\n"
+                f"Tags: {tags_str}\n"
+            )
+        return "\n".join(output)
+    except Exception as e:
+        return f"Error searching similar labeled snapshots: {e}"
+
+
 # Export a tool mapping
 TOOLS = {
     "search_screenshots_semantic": tool_search_screenshots_semantic,
+    "get_similar_labeled_snapshots": tool_get_similar_labeled_snapshots,
     "get_active_projects": tool_get_active_projects,
     "aggregate_project_hours": tool_aggregate_project_hours,
     "query_github": tool_query_github,
@@ -165,6 +205,7 @@ def run_agent_node(state: AgentState) -> AgentState:
         "Use the tools provided to answer the user's questions.",
         "Your available tools are:",
         "- search_screenshots_semantic(query): Search vector db of screenshots using semantic search.",
+        "- get_similar_labeled_snapshots(query): Search vector db for similar labeled snapshots, giving 5x weight to human-verified project labels and matching tags/applications.",
         "- get_active_projects(): List configured projects, descriptions, and work guidelines.",
         "- aggregate_project_hours(): Return total active hours spent on each project number.",
         "- query_github(query): Find commits, PRs, or issues on user's GitHub repositories.",
@@ -172,6 +213,7 @@ def run_agent_node(state: AgentState) -> AgentState:
         "",
         "CRITICAL: Always perform 'search_screenshots_semantic' first if the user is asking about past active sessions,",
         "such as browsing website pages, looking for sneakers, reading files, or coding topics.",
+        "CRITICAL: If the user is asking to categorize a task/application under a project, or wants to check how similar activities were labeled, call 'get_similar_labeled_snapshots' to leverage historical human-verified and tag-matched project associations.",
         "",
         "To invoke a tool, output a single line matching this format exactly:",
         "CALL_TOOL: tool_name, argument_string",

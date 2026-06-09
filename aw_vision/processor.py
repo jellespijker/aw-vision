@@ -428,9 +428,46 @@ class BulkProcessor:
                     projects_str = json.dumps(projects, indent=2, ensure_ascii=False)
                     has_dual_images = full_img_path.exists()
 
+                    # Fetch temporal neighbor context and app statistics
+                    timestamp = float(meta.get("timestamp", time.time()))
+                    past_neighbor = db.get_past_neighbor(timestamp)
+                    future_neighbor = db.get_future_neighbor(timestamp)
+
+                    neighbor_context_str = ""
+                    if past_neighbor:
+                        p_proj = past_neighbor.get("project_number") or "None"
+                        p_human = "Yes (Verified)" if past_neighbor.get("human_labeled") else "No (Auto-classified)"
+                        neighbor_context_str += f"""- PRECEDING SNAPSHOT (Past Neighbor):
+  * Application: {past_neighbor.get('app_name', 'Unknown')}
+  * Window Title: {past_neighbor.get('window_title', 'Unknown')}
+  * Description: {past_neighbor.get('description', 'No description')}
+  * Project Assigned: {p_proj}
+  * Label Is Verified by Human: {p_human}
+"""
+                    if future_neighbor:
+                        f_proj = future_neighbor.get("project_number") or "None"
+                        f_human = "Yes (Verified)" if future_neighbor.get("human_labeled") else "No (Auto-classified)"
+                        neighbor_context_str += f"""- SUCCEEDING SNAPSHOT (Future Neighbor):
+  * Application: {future_neighbor.get('app_name', 'Unknown')}
+  * Window Title: {future_neighbor.get('window_title', 'Unknown')}
+  * Description: {future_neighbor.get('description', 'No description')}
+  * Project Assigned: {f_proj}
+  * Label Is Verified by Human: {f_human}
+"""
+                    if not neighbor_context_str:
+                        neighbor_context_str = "- No chronological neighbor snapshots are currently available."
+
+                    app_name = meta.get("app_name", "Unknown")
+                    app_freqs = db.get_app_project_frequencies(app_name)
+                    app_freq_str = ""
+                    if app_freqs:
+                        app_freq_str = "\n".join([f"  * Project {proj}: score {freq:.1f}" for proj, freq in app_freqs.items()])
+                    else:
+                        app_freq_str = f"  * No historical project associations for '{app_name}'."
+
                     prompt_text = f"""
 ### USER METADATA CONTEXT
-- Active Application: {meta.get('app_name', 'Unknown')}
+- Active Application: {app_name}
 - Active Window Title: {meta.get('window_title', 'Unknown')}
 - Extracted Focused Screen Text (OCR):
 ---
@@ -446,6 +483,18 @@ These represent other active watcher logs from the user's computer around this t
 ### PROJECT REFERENCE CATALOG
 Below is the list of active work projects you can match against:
 {projects_str}
+
+### CHRONOLOGICAL NEIGHBORS & TEMPORAL CONTEXT
+Below are details of the immediately adjacent snapshot recordings (past and future). Use this to maintain temporal coherence across computer activity. If adjacent snapshots are assigned to a certain project (especially if human-verified), prefer to stay on that project context unless there's a clear change in activity.
+---
+{neighbor_context_str}
+---
+
+### APPLICATION PROJECT HISTORICAL STATISTICS
+Historically, the application '{app_name}' has been mapped to these projects with the following weighted frequencies (higher scores indicate stronger/human-verified correlation):
+---
+{app_freq_str}
+---
 
 ### SCREENSHOT STRUCTURE & PRIORITIES
 """
@@ -488,7 +537,10 @@ Follow these strict rules:
 3. **Tag Generation**:
 - Return 3 to 7 highly relevant, technical tags or keywords representing the current task (e.g., ["react", "api-integration", "customer-outreach", "documentation", "system-diagnostic"]).
 - Re-use tags from this list of existing tags whenever possible to keep the database consistent: {existing_tags}
-- Only generate a new tag if none of the existing ones fit the specific technical domain.
+4. **Temporal Coherence**:
+   - Utilize the CHRONOLOGICAL NEIGHBORS and APPLICATION PROJECT HISTORICAL STATISTICS to guide your categorization.
+   - If the preceding or succeeding snapshots are assigned to a project and the current screenshot shows continuous activity in the same context, you should assign the same project to ensure temporal continuity.
+   - If a human-verified project assignment exists in the neighboring context for the same application, give it strong preference.
 
 You MUST respond in valid JSON format matching the schema below. Do not include any markdown wrapper outside of the JSON output.
 JSON Schema:
@@ -577,6 +629,7 @@ JSON Schema:
                     "ocr_text": ocr_text,
                     "tags": tags,
                     "project_number": project_number,
+                    "human_labeled": False,
                     "vector": embedding,
                 }
 
