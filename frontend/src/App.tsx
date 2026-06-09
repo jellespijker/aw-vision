@@ -8,7 +8,7 @@ const getApiBase = (): string => {
   }
   // If hosted on a port that is not port 5666 (backend), point to port 5666
   if (window.location.port !== '5666') {
-    return 'http://localhost:5666'
+    return 'http://127.0.0.1:5666'
   }
   return ''
 }
@@ -53,6 +53,13 @@ interface DaemonStatus {
   pending_queue_size: number
   processed_database_size: number
   system_load: SystemLoad
+  aw_server_online?: boolean
+  ollama_online?: boolean
+  capture_cli_available?: boolean
+  capture_cli_details?: {
+    spectacle: boolean
+    grim: boolean
+  }
 }
 
 interface ChatMessage {
@@ -119,6 +126,12 @@ export default function App() {
   const [expandedOcrCardId, setExpandedOcrCardId] = useState<string | null>(null)
   const [processingIds, setProcessingIds] = useState<string[]>([])
   const [bulkProcessing, setBulkProcessing] = useState<boolean>(false)
+
+  const [cardViewFull, setCardViewFull] = useState<Record<string, boolean>>({})
+  const [lightboxViewFull, setLightboxViewFull] = useState<boolean>(false)
+  const [logs, setLogs] = useState<Record<string, string[]>>({})
+  const pollingIntervals = useRef<Record<string, any>>({})
+
 
   // Projects States
   const [projectsList, setProjectsList] = useState<Project[]>([])
@@ -218,12 +231,35 @@ export default function App() {
   const handleForceProcess = async (fileId: string): Promise<HistoryRecord | null> => {
     if (!serverOnline) return null
     setProcessingIds(prev => [...prev, fileId])
+
+    const pollLogs = async () => {
+      try {
+        const resp = await axios.get(`/api/process/${fileId}/logs`)
+        if (resp.data && resp.data.logs) {
+          setLogs(prev => ({ ...prev, [fileId]: resp.data.logs }))
+        }
+      } catch (err) {
+        console.error("Error polling logs:", err)
+      }
+    }
+
+    // Start polling immediately and then every 1000ms
+    pollLogs()
+    const interval = setInterval(pollLogs, 1000)
+    pollingIntervals.current[fileId] = interval
+
     try {
       const resp = await axios.post(`/api/process/${fileId}`)
       if (resp.status === 200) {
         setToastMessage({ text: 'Screenshot processed successfully!', type: 'success' })
         fetchHistory(currentPage)
         getDaemonStatus()
+        
+        // Also update selectedRecord if it's currently selected in lightbox
+        if (selectedRecord && selectedRecord.id === fileId) {
+          setSelectedRecord(resp.data as HistoryRecord)
+        }
+        
         return resp.data as HistoryRecord
       }
     } catch (e: any) {
@@ -231,6 +267,12 @@ export default function App() {
       setToastMessage({ text: `Failed to process screenshot: ${errMsg}`, type: 'danger' })
     } finally {
       setProcessingIds(prev => prev.filter(id => id !== fileId))
+      if (pollingIntervals.current[fileId]) {
+        clearInterval(pollingIntervals.current[fileId])
+        delete pollingIntervals.current[fileId]
+      }
+      // One final logs poll to get completion details
+      setTimeout(pollLogs, 500)
     }
     return null
   }
@@ -314,9 +356,20 @@ export default function App() {
     }
   }
 
-  const openImageLightbox = (rec: HistoryRecord) => {
+  const openImageLightbox = async (rec: HistoryRecord) => {
     setSelectedRecord(rec)
+    setLightboxViewFull(false)
     setLightboxOpen(true)
+
+    // Retrieve processing logs (whether pending or processed, falling back to disk)
+    try {
+      const resp = await axios.get(`/api/process/${rec.id}/logs`)
+      if (resp.data && resp.data.logs) {
+        setLogs(prev => ({ ...prev, [rec.id]: resp.data.logs }))
+      }
+    } catch (err) {
+      console.error("Error loading processing logs for record:", err)
+    }
   }
 
   const formatTimestamp = (ts: number) => {
@@ -497,14 +550,29 @@ export default function App() {
             {serverOnline && status && (
               <>
                 {/* Active Daemon Indicators (Pill shape reserved exclusively for Status Badges) */}
-                <div className="bg-surface-container-low border border-surface-container-high px-3 h-10 rounded-full flex items-center gap-2 text-indicator-bold text-neutral-dark">
+                <div className="bg-surface-container-low border border-surface-container-high px-3 h-10 rounded-full flex items-center gap-2 text-indicator-bold text-neutral-dark" title="aw-watcher activity status">
                   <span className={`w-2.5 h-2.5 rounded-full ${status.watcher_running ? 'bg-success-green' : 'bg-danger-primary'}`}></span>
                   <span>Watcher: {status.watcher_running ? 'ACTIVE' : 'STOPPED'}</span>
                 </div>
 
-                <div className="bg-surface-container-low border border-surface-container-high px-3 h-10 rounded-full flex items-center gap-2 text-indicator-bold text-neutral-dark">
+                <div className="bg-surface-container-low border border-surface-container-high px-3 h-10 rounded-full flex items-center gap-2 text-indicator-bold text-neutral-dark" title="Bulk processor status">
                   <span className={`w-2.5 h-2.5 rounded-full ${status.processor_running ? 'bg-success-green animate-pulse-slow' : 'bg-disabled'}`}></span>
                   <span>Processor: {status.processor_running ? 'ACTIVE' : 'IDLE'}</span>
+                </div>
+
+                <div className="bg-surface-container-low border border-surface-container-high px-3 h-10 rounded-full flex items-center gap-2 text-indicator-bold text-neutral-dark" title="ActivityWatch core server connection status (port 5600)">
+                  <span className={`w-2.5 h-2.5 rounded-full ${status.aw_server_online ? 'bg-success-green' : 'bg-danger-primary'}`}></span>
+                  <span>aw-server: {status.aw_server_online ? 'ONLINE' : 'OFFLINE'}</span>
+                </div>
+
+                <div className="bg-surface-container-low border border-surface-container-high px-3 h-10 rounded-full flex items-center gap-2 text-indicator-bold text-neutral-dark" title="Ollama API service connection status (port 11434)">
+                  <span className={`w-2.5 h-2.5 rounded-full ${status.ollama_online ? 'bg-success-green' : 'bg-danger-primary'}`}></span>
+                  <span>Ollama: {status.ollama_online ? 'ONLINE' : 'OFFLINE'}</span>
+                </div>
+
+                <div className="bg-surface-container-low border border-surface-container-high px-3 h-10 rounded-full flex items-center gap-2 text-indicator-bold text-neutral-dark" title="Wayland capture utility spectacle/grim availability">
+                  <span className={`w-2.5 h-2.5 rounded-full ${status.capture_cli_available ? 'bg-success-green' : 'bg-danger-primary'}`}></span>
+                  <span>Capture CLI: {status.capture_cli_available ? 'AVAILABLE' : 'MISSING'}</span>
                 </div>
 
                 <button
@@ -523,6 +591,7 @@ export default function App() {
             {/* Tabs Navigation (Height 40px, font Messina Sans) */}
             <div className="flex border-b border-surface-container-high mb-6 gap-2">
               <button
+                id="tab-chat"
                 onClick={() => setActiveTab('chat')}
                 className={`h-10 px-5 text-action-md font-medium rounded-t transition-colors border-b-2 flex items-center gap-2 font-messina select-none ${
                   activeTab === 'chat'
@@ -533,6 +602,7 @@ export default function App() {
                 <Bot className="w-4 h-4" /> Ask Memory Agent
               </button>
               <button
+                id="tab-gallery"
                 onClick={() => setActiveTab('gallery')}
                 className={`h-10 px-5 text-action-md font-medium rounded-t transition-colors border-b-2 flex items-center gap-2 font-messina select-none ${
                   activeTab === 'gallery'
@@ -543,6 +613,7 @@ export default function App() {
                 <ImageIcon className="w-4 h-4" /> Screenshot Library &amp; Search {totalCount > 0 && `(${totalCount})`}
               </button>
               <button
+                id="tab-projects"
                 onClick={() => setActiveTab('projects')}
                 className={`h-10 px-5 text-action-md font-medium rounded-t transition-colors border-b-2 flex items-center gap-2 font-messina select-none ${
                   activeTab === 'projects'
@@ -836,8 +907,29 @@ export default function App() {
                         >
                           {rec.image_filename ? (
                             <>
+                              {/* View mode toggle at bottom-left */}
+                              <div 
+                                className="absolute bottom-2 left-2 z-10 flex gap-1 bg-white/95 p-0.5 rounded border border-surface-container-high text-[9px] font-semibold font-messina"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => setCardViewFull(prev => ({...prev, [rec.id]: false}))}
+                                  className={`px-1.5 py-0.5 rounded-sm transition-colors cursor-pointer ${!cardViewFull[rec.id] ? 'bg-primary text-white font-bold' : 'text-text-secondary hover:text-neutral-dark'}`}
+                                >
+                                  Active
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCardViewFull(prev => ({...prev, [rec.id]: true}))}
+                                  className={`px-1.5 py-0.5 rounded-sm transition-colors cursor-pointer ${cardViewFull[rec.id] ? 'bg-primary text-white font-bold' : 'text-text-secondary hover:text-neutral-dark'}`}
+                                >
+                                  Full
+                                </button>
+                              </div>
+
                               <img
-                                src={`${API_BASE}/api/screenshots/${rec.image_filename}`}
+                                src={`${API_BASE}/api/screenshots/${cardViewFull[rec.id] ? rec.image_filename.replace('.png', '_full.png') : rec.image_filename}`}
                                 className="w-full h-full object-cover"
                                 alt="Computer desktop capture"
                                 loading="lazy"
@@ -946,6 +1038,21 @@ export default function App() {
                                 )}
                                 {processingIds.includes(rec.id) ? 'Processing...' : 'Process Screenshot'}
                               </button>
+
+                              {/* Logs Terminal snippet */}
+                              {logs[rec.id] && logs[rec.id].length > 0 && (
+                                <div className="bg-surface-container-low border border-surface-container-high text-text-secondary font-mono text-[10px] p-2 rounded max-h-[120px] overflow-y-auto space-y-0.5 mt-2 select-all">
+                                  <div className="text-[9px] font-semibold text-text-primary uppercase tracking-wider mb-1 flex items-center justify-between border-b border-surface-container pb-1 font-messina">
+                                    <span>Processing Terminal</span>
+                                    {processingIds.includes(rec.id) && (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-success-green animate-ping"></span>
+                                    )}
+                                  </div>
+                                  {logs[rec.id].map((line, idx) => (
+                                    <div key={idx} className="leading-normal break-all text-left">{line}</div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1088,10 +1195,29 @@ export default function App() {
               </button>
 
               {/* Image Frame */}
-              <div className="bg-surface-container flex justify-center items-center p-3 border-b border-surface-container-high h-[380px] md:h-[450px]">
+              <div className="bg-surface-container flex justify-center items-center p-3 border-b border-surface-container-high h-[380px] md:h-[450px] relative">
+                {selectedRecord.image_filename && (
+                  <div className="absolute top-4 left-4 z-20 flex gap-1 bg-white/95 p-0.5 rounded border border-surface-container-high text-[10px] font-semibold font-messina select-none">
+                    <button
+                      type="button"
+                      onClick={() => setLightboxViewFull(false)}
+                      className={`px-2.5 py-1 rounded-sm transition-colors cursor-pointer ${!lightboxViewFull ? 'bg-primary text-white font-bold' : 'text-text-secondary hover:text-neutral-dark'}`}
+                    >
+                      Active Window Crop
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLightboxViewFull(true)}
+                      className={`px-2.5 py-1 rounded-sm transition-colors cursor-pointer ${lightboxViewFull ? 'bg-primary text-white font-bold' : 'text-text-secondary hover:text-neutral-dark'}`}
+                    >
+                      Full Desktop
+                    </button>
+                  </div>
+                )}
+
                 {selectedRecord.image_filename ? (
                   <img
-                    src={`${API_BASE}/api/screenshots/${selectedRecord.image_filename}`}
+                    src={`${API_BASE}/api/screenshots/${lightboxViewFull ? selectedRecord.image_filename.replace('.png', '_full.png') : selectedRecord.image_filename}`}
                     className="max-w-full max-h-full rounded object-contain"
                     alt="Desktop Full View"
                   />
@@ -1139,15 +1265,17 @@ export default function App() {
 
                 {/* Tag items / Lightbox Force Process option */}
                 {selectedRecord.is_processed ? (
-                  selectedRecord.tags && selectedRecord.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 pt-2 border-t border-surface-container">
-                      {selectedRecord.tags.map((tag) => (
-                        <span key={tag} className="text-technical-sm font-semibold bg-accent-surface border border-surface-container-high text-primary px-2 py-0.5 rounded">
-                          #{tag}
-                        </span>
-                      ))}
-                    </div>
-                  )
+                  <div className="space-y-4">
+                    {selectedRecord.tags && selectedRecord.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-2 border-t border-surface-container">
+                        {selectedRecord.tags.map((tag) => (
+                          <span key={tag} className="text-technical-sm font-semibold bg-accent-surface border border-surface-container-high text-primary px-2 py-0.5 rounded">
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <div className="pt-2 border-t border-surface-container">
                     <button
@@ -1166,6 +1294,31 @@ export default function App() {
                       )}
                       {processingIds.includes(selectedRecord.id) ? 'Processing Screenshot...' : 'Process Screenshot Now'}
                     </button>
+                  </div>
+                )}
+
+                {/* Persistent/Historic Step logs (Collapsible console snippet) */}
+                {logs[selectedRecord.id] && logs[selectedRecord.id].length > 0 && (
+                  <div className="bg-surface-container-low p-4 rounded border border-surface-container-high space-y-2 mt-3">
+                    <button
+                      onClick={() => setExpandedOcrCardId(expandedOcrCardId === `logs-${selectedRecord.id}` ? null : `logs-${selectedRecord.id}`)}
+                      className="w-full text-left flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-text-secondary font-messina"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-primary-container" /> 
+                        Processing Step Logs
+                      </span>
+                      <span className="text-primary-container">
+                        {expandedOcrCardId === `logs-${selectedRecord.id}` ? 'Hide Logs' : 'View Logs'}
+                      </span>
+                    </button>
+                    <div className={`transition-all duration-200 overflow-hidden ${expandedOcrCardId === `logs-${selectedRecord.id}` ? 'max-h-48 overflow-y-auto' : 'max-h-0'}`}>
+                      <div className="bg-surface-container-low border border-surface-container text-text-secondary font-mono text-[10px] p-3 rounded space-y-0.5 select-all leading-normal">
+                        {logs[selectedRecord.id].map((line, idx) => (
+                          <div key={idx} className="leading-normal break-all text-left">{line}</div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

@@ -23,10 +23,25 @@ class BulkProcessor:
         self.thread = None
         self.lock = threading.Lock()
         self.processing_ids = set()
+        self.processing_logs = {}
 
         # Ensure directories exist
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.processed_dir.mkdir(parents=True, exist_ok=True)
+
+    def log_step(self, rec_id: str, message: str):
+        """Append a timestamped progress message for a specific file_id."""
+        timestamp_str = datetime.now().strftime("%H:%M:%S")
+        msg = f"[{timestamp_str}] {message}"
+        print(f"[{rec_id}] {msg}")
+        with self.lock:
+            if rec_id not in self.processing_logs:
+                self.processing_logs[rec_id] = []
+            self.processing_logs[rec_id].append(msg)
+            # Keep logs bounded to last 100 screenshots to prevent memory leak
+            if len(self.processing_logs) > 100:
+                oldest_key = next(iter(self.processing_logs))
+                self.processing_logs.pop(oldest_key, None)
 
     def get_nvidia_gpus_usage(self) -> list[dict]:
         """Query nvidia-smi to get GPU utilization and process list."""
@@ -126,25 +141,33 @@ class BulkProcessor:
         queue.sort(key=lambda x: x[1].name)
         return queue
 
-    def get_ollama_embedding(self, text: str) -> list[float]:
+    def get_ollama_embedding(self, text: str, rec_id: str = None) -> list[float]:
         """Fetch vector embedding for the description using Ollama."""
         try:
             url = f"{config.ollama_host}/api/embeddings"
             payload = {"model": config.embedding_model, "prompt": text}
-            resp = requests.post(url, json=payload, timeout=5.0)
+            resp = requests.post(url, json=payload, timeout=30.0)
             if resp.status_code == 200:
                 return resp.json().get("embedding", [])
         except Exception as e:
-            print(f"Error generating embedding from Ollama: {e}")
+            err_msg = f"Error generating embedding from Ollama: {e}"
+            if rec_id:
+                self.log_step(rec_id, err_msg)
+            else:
+                print(err_msg)
 
         # Fallback to zero vector if embedding fails (to prevent pipeline crash)
         dim = db.get_embedding_dimension()
         return [0.0] * dim
 
-    def extract_ocr_text(self, img_path: Path) -> str:
+    def extract_ocr_text(self, img_path: Path, rec_id: str = None) -> str:
         """Call local Ollama OCR model to extract all readable text from screenshot."""
         try:
-            print(f"[{datetime.now()}] Running OCR on screenshot using model: {config.ocr_model}")
+            msg = f"Running OCR on screenshot using model: {config.ocr_model}"
+            if rec_id:
+                self.log_step(rec_id, msg)
+            else:
+                print(f"[{datetime.now()}] {msg}")
             client = ollama.Client(host=config.ollama_host)
             prompt = "Extract all readable text, titles, labels, or content from this desktop screenshot exactly as shown. Do not explain, describe, or add any meta-commentary. Just output the extracted text."
             response = client.chat(
@@ -153,10 +176,18 @@ class BulkProcessor:
                 options={"temperature": 0.1},
             )
             ocr_text = response.get("message", {}).get("content", "").strip()
-            print(f"[{datetime.now()}] OCR Extracted text length: {len(ocr_text)}")
+            msg2 = f"OCR Extracted text length: {len(ocr_text)}"
+            if rec_id:
+                self.log_step(rec_id, msg2)
+            else:
+                print(f"[{datetime.now()}] {msg2}")
             return ocr_text
         except Exception as e:
-            print(f"Error running OCR with Ollama model {config.ocr_model}: {e}")
+            err_msg = f"Error running OCR with Ollama model {config.ocr_model}: {e}"
+            if rec_id:
+                self.log_step(rec_id, err_msg)
+            else:
+                print(err_msg)
             return ""
 
     def run_retention_cleanup(self):
@@ -194,6 +225,15 @@ class BulkProcessor:
                         except Exception as e:
                             print(f"Error deleting full file {full_p}: {e}")
 
+                    # Also delete corresponding log file if present (for retention)
+                    log_p = p.parent / f"{p.stem}.log"
+                    if log_p.exists():
+                        try:
+                            log_p.unlink()
+                            print(f"Deleted expired log file: {log_p}")
+                        except Exception as e:
+                            print(f"Error deleting log file {log_p}: {e}")
+
                     # Also check raw directory for same filename if not cleared
                     raw_p = self.raw_dir / p.name
                     if raw_p.exists():
@@ -210,6 +250,14 @@ class BulkProcessor:
                             print(f"Deleted expired raw full file: {raw_full_p}")
                         except Exception as e:
                             print(f"Error deleting raw full file {raw_full_p}: {e}")
+
+                    raw_log_p = self.raw_dir / f"{p.stem}.log"
+                    if raw_log_p.exists():
+                        try:
+                            raw_log_p.unlink()
+                            print(f"Deleted expired raw log file: {raw_log_p}")
+                        except Exception as e:
+                            print(f"Error deleting raw log file {raw_log_p}: {e}")
 
                     db.nullify_expired_screenshot_path(rec_id)
                     purged_count += 1
@@ -244,14 +292,17 @@ class BulkProcessor:
             self.processing_ids.add(rec_id)
 
         try:
-            print(f"[{datetime.now()}] Processing pending screenshot: {img_path.name}")
             app_name = metadata.get("app_name", "Unknown")
             window_title = metadata.get("window_title", "Unknown")
 
+            self.log_step(rec_id, f"Initializing processing for screenshot: {img_path.name}")
+            self.log_step(rec_id, f"App: {app_name}, Window: {window_title[:40]}")
+
             # 1. Run OCR extraction
-            ocr_text = self.extract_ocr_text(img_path)
+            ocr_text = self.extract_ocr_text(img_path, rec_id)
 
             # 2. Get unique tags for tag reuse
+            self.log_step(rec_id, "Retrieving existing database tags for classification...")
             existing_tags = db.get_all_unique_tags()
             if len(existing_tags) > 100:
                 existing_tags = existing_tags[:100]  # Cap for prompt efficiency
@@ -297,6 +348,9 @@ JSON Schema:
             full_img_path = img_path.parent / full_img_filename
             vision_img_path = full_img_path if full_img_path.exists() else img_path
 
+            self.log_step(rec_id, f"Using image for vision analysis: {vision_img_path.name}")
+            self.log_step(rec_id, f"Calling vision model '{config.vision_model}' for task description, tagging, and project matching...")
+
             # Call Ollama chat vision endpoint
             client = ollama.Client(host=config.ollama_host)
             response = client.chat(
@@ -308,7 +362,7 @@ JSON Schema:
 
             # Parse JSON response
             raw_response = response.get("message", {}).get("content", "")
-            print(f"Ollama Vision response: {raw_response}")
+            self.log_step(rec_id, f"Ollama Vision response received (length {len(raw_response)}).")
 
             parsed = json.loads(raw_response)
             description = parsed.get("description", "No description generated.")
@@ -317,9 +371,12 @@ JSON Schema:
             if project_number == "None":
                 project_number = None
 
+            self.log_step(rec_id, f"Classification result - Project: {project_number or 'None'}, Tags: {tags}")
+
             # 3. Get embedding of the combined description & OCR text
+            self.log_step(rec_id, f"Generating semantic embedding (1024-dim joint vector) using '{config.embedding_model}'...")
             embedding_text = f"Description: {description}\n\nExtracted Screen Text:\n{ocr_text}"
-            embedding = self.get_ollama_embedding(embedding_text)
+            embedding = self.get_ollama_embedding(embedding_text, rec_id)
 
             # Build database record
             db_record = {
@@ -337,19 +394,38 @@ JSON Schema:
             }
 
             # Insert into database
+            self.log_step(rec_id, "Committing record to local LanceDB database...")
             db.insert_screenshot(db_record)
 
             # Move image & metadata to processed directory
+            self.log_step(rec_id, "Archiving screenshots and clearing temporary ingestion files...")
             shutil.move(str(img_path), str(self.processed_dir / img_path.name))
             if full_img_path.exists():
                 shutil.move(str(full_img_path), str(self.processed_dir / full_img_filename))
             meta_path.unlink()  # Delete temporary raw metadata JSON file
 
-            print(f"[{datetime.now()}] Successfully processed screenshot. Classified as project: {project_number}")
+            self.log_step(rec_id, "Processing completed successfully.")
+
+            # Save processed log file to disk
+            try:
+                log_file = self.processed_dir / f"{rec_id}.log"
+                with open(log_file, "w", encoding="utf-8") as lf:
+                    lf.write("\n".join(self.processing_logs.get(rec_id, [])))
+            except Exception as le:
+                print(f"Error saving processed log file: {le}")
+
             return True
 
         except Exception as e:
-            print(f"Error processing screenshot {img_path.name}: {e}")
+            err_msg = f"Error processing screenshot {img_path.name}: {e}"
+            self.log_step(rec_id, err_msg)
+            # Save failed log file to disk in raw directory
+            try:
+                log_file = img_path.parent / f"{rec_id}.log"
+                with open(log_file, "w", encoding="utf-8") as lf:
+                    lf.write("\n".join(self.processing_logs.get(rec_id, [])))
+            except Exception as le:
+                print(f"Error saving raw log file: {le}")
             traceback.print_exc()
             return False
         finally:
