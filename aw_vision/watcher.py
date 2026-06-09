@@ -71,11 +71,12 @@ class ScreenshotWatcher:
 
         return False
 
-    def fetch_active_window_and_afk(self) -> tuple[str, str, bool]:
-        """Query aw-server to get the current window title, app name, and AFK status."""
+    def fetch_active_window_and_afk(self) -> tuple[str, str, bool, dict]:
+        """Query aw-server to get the current window title, app name, AFK status, and extra bucket contexts."""
         window_title = "Unknown"
         app_name = "Unknown"
         is_afk = False
+        bucket_context = {}
 
         try:
             # Fetch buckets to find the correct window and AFK buckets
@@ -118,18 +119,37 @@ class ScreenshotWatcher:
                             data = events[0].get("data", {})
                             is_afk = data.get("status") == "afk"
 
+                # Fetch other custom watcher buckets context for extra details (e.g. Chrome, IDE editors)
+                for bid in buckets.keys():
+                    if bid.startswith("aw-watcher-") and not bid.startswith("aw-watcher-afk") and not bid.startswith("aw-watcher-window"):
+                        # Get latest event from this custom bucket
+                        b_resp = requests.get(
+                            f"http://localhost:5600/api/0/buckets/{bid}/events?limit=1",
+                            timeout=1.0,
+                        )
+                        if b_resp.status_code == 200:
+                            events = b_resp.json()
+                            if events:
+                                bucket_context[bid] = events[0].get("data", {})
+
         except Exception as e:
             print(f"Warning: Could not connect to aw-server to gather context ({e})")
 
-        return window_title, app_name, is_afk
+        return window_title, app_name, is_afk, bucket_context
 
     def capture_cycle(self):
         """Main screenshot and context capture iteration."""
         # 1. Gather context first to check if the user is active
-        window_title, app_name, is_afk = self.fetch_active_window_and_afk()
+        window_title, app_name, is_afk, bucket_context = self.fetch_active_window_and_afk()
 
         if is_afk:
-            print(f"[{datetime.now()}] User is AFK. Skipping screenshot capture cycle.")
+            print(f"[{datetime.now()}] User is AFK. Skipping screenshot capture cycle. Triggering bulk processing.")
+            # Trigger asynchronous processing of all pending screenshots
+            try:
+                from aw_vision.processor import processor
+                processor.force_process_all()
+            except Exception as e:
+                print(f"Error auto-triggering bulk processing on AFK: {e}")
             return
 
         timestamp = time.time()
@@ -167,6 +187,7 @@ class ScreenshotWatcher:
             "window_title": window_title,
             "app_name": app_name,
             "is_afk": is_afk,
+            "aw_bucket_context": bucket_context,
         }
         try:
             with open(meta_path, "w", encoding="utf-8") as f:

@@ -160,7 +160,7 @@ class BulkProcessor:
         dim = db.get_embedding_dimension()
         return [0.0] * dim
 
-    def extract_ocr_text(self, img_path: Path, rec_id: str = None) -> str:
+    def extract_ocr_text(self, img_path: Path, rec_id: str = None, keep_alive: int = 0) -> str:
         """Call local Ollama OCR model to extract all readable text from screenshot."""
         try:
             msg = f"Running OCR on screenshot using model: {config.ocr_model}"
@@ -174,7 +174,7 @@ class BulkProcessor:
                 model=config.ocr_model,
                 messages=[{"role": "user", "content": prompt, "images": [str(img_path)]}],
                 options={"temperature": 0.1},
-                keep_alive=0,
+                keep_alive=keep_alive,
             )
             ocr_text = response.get("message", {}).get("content", "").strip()
             msg2 = f"OCR Extracted text length: {len(ocr_text)}"
@@ -341,86 +341,154 @@ class BulkProcessor:
             print(f"Error running retention cleanup: {e}")
             traceback.print_exc()
 
-    def process_screenshot(self, img_path: Path, meta_path: Path, projects: list) -> bool:
-        """Process a single screenshot using Ollama vision model and commit to database."""
-        if not meta_path.exists() or not img_path.exists():
-            return False
-
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                metadata = json.load(f)
-            rec_id = metadata["id"]
-        except Exception as e:
-            print(f"Error reading metadata file {meta_path}: {e}")
-            return False
-
+    def process_batch(self, queue: list[tuple[Path, Path]], projects: list) -> bool:
+        """Process a list of raw screenshot and metadata tuples sequentially in distinct stages to limit Ollama model load/unload cycles."""
+        batch_items = []
         with self.lock:
-            if rec_id in self.processing_ids:
-                print(f"Screenshot {rec_id} is already being processed. Skipping.")
-                return False
-            self.processing_ids.add(rec_id)
+            for img_path, meta_path in queue:
+                if not meta_path.exists() or not img_path.exists():
+                    continue
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    rec_id = meta["id"]
+                    if rec_id in self.processing_ids:
+                        print(f"Screenshot {rec_id} is already being processed. Skipping.")
+                        continue
+                    self.processing_ids.add(rec_id)
+                    batch_items.append((img_path, meta_path, rec_id, meta))
+                except Exception as e:
+                    print(f"Error reading metadata during batch filter for {meta_path}: {e}")
+                    continue
 
-        try:
-            app_name = metadata.get("app_name", "Unknown")
-            window_title = metadata.get("window_title", "Unknown")
+        if not batch_items:
+            return False
 
-            self.log_step(rec_id, f"Initializing processing for screenshot: {img_path.name}")
-            self.log_step(rec_id, f"App: {app_name}, Window: {window_title[:40]}")
+        N = len(batch_items)
+        print(f"[{datetime.now()}] Batch-processing {N} screenshots in staged sweeps...")
 
-            # Optimize screenshots before running OCR/Vision to save disk, memory, and improve model performance
-            full_img_filename = f"{img_path.stem}_full.png"
-            full_img_path = img_path.parent / full_img_filename
+        # -------------------------------------------------------------
+        # Phase 1: Optimize & OCR Sweep
+        # -------------------------------------------------------------
+        for idx, (img_path, meta_path, rec_id, meta) in enumerate(batch_items):
+            try:
+                self.log_step(rec_id, f"Phase 1/3: Image Optimization & OCR extraction (item {idx + 1}/{N} in batch)")
 
-            self.optimize_image(img_path, rec_id, max_size=1200)
-            if full_img_path.exists():
-                self.optimize_image(full_img_path, rec_id, max_size=1200)
+                # Image optimization
+                full_img_filename = f"{img_path.stem}_full.png"
+                full_img_path = img_path.parent / full_img_filename
 
-            # 1. Run OCR extraction
-            ocr_text = self.extract_ocr_text(img_path, rec_id)
+                self.optimize_image(img_path, rec_id, max_size=1200)
+                if full_img_path.exists():
+                    self.optimize_image(full_img_path, rec_id, max_size=1200)
 
-            # 2. Get unique tags for tag reuse
-            self.log_step(rec_id, "Retrieving existing database tags for classification...")
-            existing_tags = db.get_all_unique_tags()
-            if len(existing_tags) > 100:
-                existing_tags = existing_tags[:100]  # Cap for prompt efficiency
+                # Only run OCR if not already cached
+                if "ocr_text" not in meta or meta["ocr_text"] is None:
+                    # Keep model loaded during the sweep, unload immediately on the last item of Phase 1
+                    keep_alive = 0 if (idx == N - 1) else 300
+                    ocr_text = self.extract_ocr_text(img_path, rec_id, keep_alive=keep_alive)
+                    meta["ocr_text"] = ocr_text
 
-            projects_str = json.dumps(projects, indent=2, ensure_ascii=False)
+                    # Persist ocr_text to the metadata JSON file on disk
+                    with open(meta_path, "w", encoding="utf-8") as f:
+                        json.dump(meta, f, indent=2)
+                else:
+                    self.log_step(rec_id, "OCR text already cached in metadata JSON. Skipping OCR.")
+            except Exception as e:
+                self.log_step(rec_id, f"Error in Phase 1 (OCR) for {img_path.name}: {e}")
 
-            # Prompt for Ollama vision model
-            prompt_text = f"""
+        # -------------------------------------------------------------
+        # Phase 2: Vision Analysis Sweep
+        # -------------------------------------------------------------
+        for idx, (img_path, meta_path, rec_id, meta) in enumerate(batch_items):
+            try:
+                self.log_step(rec_id, f"Phase 2/3: Vision model analysis & Project classification (item {idx + 1}/{N} in batch)")
+
+                # Only run Vision if not already processed (meaning we don't have description)
+                if "description" not in meta or meta["description"] is None:
+                    full_img_filename = f"{img_path.stem}_full.png"
+                    full_img_path = img_path.parent / full_img_filename
+
+                    images_payload = []
+                    if full_img_path.exists():
+                        # Pass focused crop as image 1, and fullscreen desktop as image 2 (context)
+                        images_payload = [str(img_path), str(full_img_path)]
+                    else:
+                        images_payload = [str(img_path)]
+
+                    aw_context_str = "None"
+                    bucket_context = meta.get("aw_bucket_context", {})
+                    if bucket_context:
+                        aw_context_str = json.dumps(bucket_context, indent=2, ensure_ascii=False)
+
+                    existing_tags = db.get_all_unique_tags()
+                    if len(existing_tags) > 100:
+                        existing_tags = existing_tags[:100]
+
+                    projects_str = json.dumps(projects, indent=2, ensure_ascii=False)
+                    has_dual_images = full_img_path.exists()
+
+                    prompt_text = f"""
 ### USER METADATA CONTEXT
-- Active Application: {app_name}
-- Active Window Title: {window_title}
-- Extracted Screen Text (OCR):
+- Active Application: {meta.get('app_name', 'Unknown')}
+- Active Window Title: {meta.get('window_title', 'Unknown')}
+- Extracted Focused Screen Text (OCR):
 ---
-{ocr_text}
+{meta.get('ocr_text', '')}
+---
+
+### ADDITIONAL ACTIVITYWATCH BUCKET STATES
+These represent other active watcher logs from the user's computer around this timestamp (e.g., active editor files, active browser URLs):
+---
+{aw_context_str}
 ---
 
 ### PROJECT REFERENCE CATALOG
 Below is the list of active work projects you can match against:
 {projects_str}
 
+### SCREENSHOT STRUCTURE & PRIORITIES
+"""
+                    if has_dual_images:
+                        prompt_text += """
+You are provided with two screenshots of the user's desktop taken at the exact same moment:
+1. **First Image**: A focused, cropped screenshot of the **Active Window** only.
+2. **Second Image**: A **Fullscreen Desktop** screenshot containing the entire display area (sidebar, background apps, adjacent windows, etc.).
+
+**CRITICAL CRITERIA**:
+- Your primary subject of analysis is the **Active Window** (First Image).
+- The OCR text provided above belongs exclusively to this Active Window (First Image).
+- The Fullscreen Desktop (Second Image) is provided purely as additional context. Any elements in the Fullscreen Desktop (Second Image) that are outside of the Active Window are supplementary or tangent, and may be completely unrelated to the primary task. You must prioritize the Active Window's contents and the OCR text when describing and classifying the work.
+"""
+                    else:
+                        prompt_text += """
+You are provided with a single screenshot of the user's desktop.
+- Analyze the screenshot, the active application metadata, and the OCR text to describe and classify the work.
+"""
+
+                    prompt_text += f"""
 ### SYSTEM INSTRUCTIONS & CLASSIFICATION RULES
-You are a highly precise automated time-tracking and productivity classification assistant. Your task is to analyze the user's desktop screenshot alongside the provided metadata context and categorize their work.
+You are a highly precise automated time-tracking and productivity classification assistant. Your task is to analyze the user's desktop state and categorize their work.
 
 Follow these strict rules:
 1. **Description Generation**:
    - Provide a highly detailed, objective, and granular description of the active window and task.
    - Specify exactly what is being viewed or worked on (e.g., specific file names, code functions, browser URLs, searched keywords, active spreadsheet columns, or chat messages).
    - If the user is on a website like LinkedIn, GitHub, or Youtube, specify the exact profile, issue, repository, channel, or video being viewed.
+   - Synthesize the OCR text, Active Window/Fullscreen screenshot details, and the Additional ActivityWatch Bucket States (such as the currently open code file or browser URL) to form a cohesive, accurate description of the user's current task.
    - Do NOT talk about the user's background or general projects unless there is direct evidence of it being the active task on the screen.
    - Ignore irrelevant sidebar elements like Chrome bookmarks, adjacent browser tabs, or inactive chat lists unless they are the direct subject.
 
 2. **Project Matching**:
-   - Compare the active window content and OCR text against the PROJECT REFERENCE CATALOG above.
+   - Compare the active window content, OCR text, and ActivityWatch bucket states against the PROJECT REFERENCE CATALOG above.
    - **CRITICAL**: Be extremely conservative and precise when matching projects. If there is no strong, explicit, and direct evidence correlating the active screen contents to a project's description/entailment, you MUST output "None".
    - Do NOT match a project just because the word or name appears in an inactive sidebar chat title, adjacent tab name, or browser bookmark.
    - Do NOT assume that external company profiles (like LinkedIn company pages or news articles) are related to the user's active development projects. For example, viewing a generic LinkedIn page should map to "None" or a general management/business category, never a specific local research or R&D project (like NGP Research) unless they are directly editing that project's architecture.
 
 3. **Tag Generation**:
-   - Return 3 to 7 highly relevant, technical tags or keywords representing the current task (e.g., ["react", "api-integration", "customer-outreach", "documentation", "system-diagnostic"]).
-   - Re-use tags from this list of existing tags whenever possible to keep the database consistent: {existing_tags}
-   - Only generate a new tag if none of the existing ones fit the specific technical domain.
+- Return 3 to 7 highly relevant, technical tags or keywords representing the current task (e.g., ["react", "api-integration", "customer-outreach", "documentation", "system-diagnostic"]).
+- Re-use tags from this list of existing tags whenever possible to keep the database consistent: {existing_tags}
+- Only generate a new tag if none of the existing ones fit the specific technical domain.
 
 You MUST respond in valid JSON format matching the schema below. Do not include any markdown wrapper outside of the JSON output.
 JSON Schema:
@@ -431,101 +499,142 @@ JSON Schema:
 }}
 """
 
-            # Determine which image to send to the vision model for full context analysis
-            full_img_filename = f"{img_path.stem}_full.png"
-            full_img_path = img_path.parent / full_img_filename
-            vision_img_path = full_img_path if full_img_path.exists() else img_path
+                    self.log_step(rec_id, f"Using images for vision analysis: {[os.path.basename(img) for img in images_payload]}")
+                    self.log_step(rec_id, f"Calling vision model '{config.vision_model}'...")
 
-            self.log_step(rec_id, f"Using image for vision analysis: {vision_img_path.name}")
-            self.log_step(rec_id, f"Calling vision model '{config.vision_model}' for task description, tagging, and project matching...")
+                    # Keep model loaded during sweep, unload on the very last item of Phase 2
+                    keep_alive = 0 if (idx == N - 1) else 300
 
-            # Call Ollama chat vision endpoint
-            client = ollama.Client(host=config.ollama_host)
-            response = client.chat(
-                model=config.vision_model,
-                messages=[{"role": "user", "content": prompt_text, "images": [str(vision_img_path)]}],
-                format="json",
-                options={"temperature": 0.2},
-                keep_alive=0,
-            )
+                    client = ollama.Client(host=config.ollama_host)
+                    response = client.chat(
+                        model=config.vision_model,
+                        messages=[{"role": "user", "content": prompt_text, "images": images_payload}],
+                        format="json",
+                        options={"temperature": 0.2},
+                        keep_alive=keep_alive,
+                    )
 
-            # Parse JSON response
-            raw_response = response.get("message", {}).get("content", "")
-            self.log_step(rec_id, f"Ollama Vision response received (length {len(raw_response)}).")
+                    raw_response = response.get("message", {}).get("content", "")
+                    self.log_step(rec_id, f"Ollama Vision response received (length {len(raw_response)}).")
 
-            parsed = json.loads(raw_response)
-            description = parsed.get("description", "No description generated.")
-            tags = parsed.get("tags", [])
-            project_number = parsed.get("project_number", "None")
-            if project_number == "None":
-                project_number = None
+                    parsed = json.loads(raw_response)
+                    meta["description"] = parsed.get("description", "No description generated.")
+                    meta["tags"] = parsed.get("tags", [])
+                    meta["project_number"] = parsed.get("project_number", "None")
 
-            self.log_step(rec_id, f"Classification result - Project: {project_number or 'None'}, Tags: {tags}")
+                    # Persist results to metadata JSON file on disk
+                    with open(meta_path, "w", encoding="utf-8") as f:
+                        json.dump(meta, f, indent=2)
+                else:
+                    self.log_step(rec_id, "Vision analysis results already cached in metadata. Skipping vision model.")
+            except Exception as e:
+                self.log_step(rec_id, f"Error in Phase 2 (Vision) for {img_path.name}: {e}")
 
-            # 3. Get embedding of the combined description & OCR text
-            self.log_step(rec_id, f"Generating semantic embedding (1024-dim joint vector) using '{config.embedding_model}'...")
-            embedding_text = f"Description: {description}\n\nExtracted Screen Text:\n{ocr_text}"
-            embedding = self.get_ollama_embedding(embedding_text, rec_id)
-
-            # Build database record
-            db_record = {
-                "id": metadata["id"],
-                "timestamp": float(metadata["timestamp"]),
-                "image_path": str(self.processed_dir / img_path.name),
-                "window_title": window_title,
-                "app_name": app_name,
-                "is_afk": bool(metadata.get("is_afk", False)),
-                "description": description,
-                "ocr_text": ocr_text,
-                "tags": tags,
-                "project_number": project_number,
-                "vector": embedding,
-            }
-
-            # Insert into database
-            self.log_step(rec_id, "Committing record to local LanceDB database...")
-            db.insert_screenshot(db_record)
-
-            # Mirror metadata to aw-server processed bucket
-            self.send_to_aw_server(db_record, rec_id)
-
-            # Move image & metadata to processed directory
-            self.log_step(rec_id, "Archiving screenshots and clearing temporary ingestion files...")
-            shutil.move(str(img_path), str(self.processed_dir / img_path.name))
-            if full_img_path.exists():
-                shutil.move(str(full_img_path), str(self.processed_dir / full_img_filename))
-            meta_path.unlink()  # Delete temporary raw metadata JSON file
-
-            self.log_step(rec_id, "Processing completed successfully.")
-
-            # Save processed log file to disk
+        # -------------------------------------------------------------
+        # Phase 3: Embeddings & DB Commit Sweep
+        # -------------------------------------------------------------
+        success_count = 0
+        for idx, (img_path, meta_path, rec_id, meta) in enumerate(batch_items):
             try:
-                log_file = self.processed_dir / f"{rec_id}.log"
-                with open(log_file, "w", encoding="utf-8") as lf:
-                    lf.write("\n".join(self.processing_logs.get(rec_id, [])))
-            except Exception as le:
-                print(f"Error saving processed log file: {le}")
+                self.log_step(rec_id, f"Phase 3/3: Embedding calculation, DB commit & Cleanup (item {idx + 1}/{N} in batch)")
 
-            return True
+                description = meta.get("description", "No description generated.")
+                ocr_text = meta.get("ocr_text", "")
+                tags = meta.get("tags", [])
+                project_number = meta.get("project_number", "None")
+                if project_number == "None":
+                    project_number = None
 
-        except Exception as e:
-            err_msg = f"Error processing screenshot {img_path.name}: {e}"
-            self.log_step(rec_id, err_msg)
-            # Save failed log file to disk in raw directory
-            try:
-                log_file = img_path.parent / f"{rec_id}.log"
-                with open(log_file, "w", encoding="utf-8") as lf:
-                    lf.write("\n".join(self.processing_logs.get(rec_id, [])))
-            except Exception as le:
-                print(f"Error saving raw log file: {le}")
-            traceback.print_exc()
-            return False
-        finally:
-            with self.lock:
+                self.log_step(rec_id, f"Generating semantic embedding (1024-dim joint vector) using '{config.embedding_model}'...")
+                embedding_text = f"Description: {description}\n\nExtracted Screen Text:\n{ocr_text}"
+
+                # Keep embedding model loaded during the sweep, unload on the very last item of Phase 3
+                keep_alive = 0 if (idx == N - 1) else 300
+
+                embedding = []
+                try:
+                    url = f"{config.ollama_host}/api/embeddings"
+                    payload = {"model": config.embedding_model, "prompt": embedding_text, "keep_alive": keep_alive}
+                    resp = requests.post(url, json=payload, timeout=30.0)
+                    if resp.status_code == 200:
+                        embedding = resp.json().get("embedding", [])
+                except Exception as ee:
+                    self.log_step(rec_id, f"Error generating embedding from Ollama: {ee}")
+
+                if not embedding:
+                    dim = db.get_embedding_dimension()
+                    embedding = [0.0] * dim
+
+                # Build database record
+                db_record = {
+                    "id": meta["id"],
+                    "timestamp": float(meta["timestamp"]),
+                    "image_path": str(self.processed_dir / img_path.name),
+                    "window_title": meta.get("window_title", "Unknown"),
+                    "app_name": meta.get("app_name", "Unknown"),
+                    "is_afk": bool(meta.get("is_afk", False)),
+                    "description": description,
+                    "ocr_text": ocr_text,
+                    "tags": tags,
+                    "project_number": project_number,
+                    "vector": embedding,
+                }
+
+                # Commit to database
+                self.log_step(rec_id, "Committing record to local LanceDB database...")
+                db.insert_screenshot(db_record)
+
+                # Mirror metadata to aw-server processed bucket
+                self.send_to_aw_server(db_record, rec_id)
+
+                # Move image & metadata to processed directory
+                self.log_step(rec_id, "Archiving screenshots and clearing temporary ingestion files...")
+                shutil.move(str(img_path), str(self.processed_dir / img_path.name))
+
+                full_img_filename = f"{img_path.stem}_full.png"
+                full_img_path = img_path.parent / full_img_filename
+                if full_img_path.exists():
+                    shutil.move(str(full_img_path), str(self.processed_dir / full_img_filename))
+
+                # Delete temporary raw metadata JSON file
+                if meta_path.exists():
+                    meta_path.unlink()
+
+                self.log_step(rec_id, "Processing completed successfully.")
+
+                # Save processed log file to disk
+                try:
+                    log_file = self.processed_dir / f"{rec_id}.log"
+                    with open(log_file, "w", encoding="utf-8") as lf:
+                        lf.write("\n".join(self.processing_logs.get(rec_id, [])))
+                except Exception as le:
+                    print(f"Error saving processed log file: {le}")
+
+                success_count += 1
+            except Exception as e:
+                err_msg = f"Error in Phase 3 (Embedding/Commit) for {img_path.name}: {e}"
+                self.log_step(rec_id, err_msg)
+                try:
+                    log_file = img_path.parent / f"{rec_id}.log"
+                    with open(log_file, "w", encoding="utf-8") as lf:
+                        lf.write("\n".join(self.processing_logs.get(rec_id, [])))
+                except Exception as le:
+                    print(f"Error saving raw log file: {le}")
+                traceback.print_exc()
+
+        # Clean up processing_ids
+        with self.lock:
+            for _, _, rec_id, _ in batch_items:
                 self.processing_ids.discard(rec_id)
 
+        return success_count > 0
+
+    def process_screenshot(self, img_path: Path, meta_path: Path, projects: list) -> bool:
+        """Process a single screenshot by wrapping it as a batch of 1 and calling process_batch."""
+        return self.process_batch([(img_path, meta_path)], projects)
+
     def force_process_all(self):
-        """Force process all pending items immediately in a background thread."""
+        """Force process all pending items immediately in an optimized background batch thread."""
         def run_force():
             print(f"[{datetime.now()}] Force processing all starting...")
             try:
@@ -534,8 +643,7 @@ JSON Schema:
                     print(f"[{datetime.now()}] Force processing all: no pending items.")
                     return
                 projects = config.load_projects()
-                for img_path, meta_path in queue:
-                    self.process_screenshot(img_path, meta_path, projects)
+                self.process_batch(queue, projects)
             except Exception as e:
                 print(f"Error in force_process_all thread: {e}")
             finally:
@@ -561,9 +669,8 @@ JSON Schema:
                     # Check if system is idle before running heavy Ollama jobs
                     if self.is_system_idle():
                         projects = config.load_projects()
-                        # Process only one screenshot per check to avoid sudden CPU spikes
-                        img_path, meta_path = queue[0]
-                        self.process_screenshot(img_path, meta_path, projects)
+                        # Process the entire queue as an optimized batch!
+                        self.process_batch(queue, projects)
                     else:
                         print("System is busy (not idle). Postponing screenshot processing.")
                 else:
