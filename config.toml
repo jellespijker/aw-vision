@@ -7,9 +7,11 @@ capture_mode = "both"
 [processing]
 cpu_threshold_percent = 30.0
 memory_threshold_percent = 80.0
+gpu_threshold_percent = 50.0
 check_interval_seconds = 10
 max_screenshot_lifetime_days = 14
 cleanup_interval_hours = 1
+
 
 [ollama]
 host = "http://localhost:11434"

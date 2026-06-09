@@ -72,6 +72,7 @@ interface HistoryRecord {
   tags: string[]
   project_number: string | null
   distance?: number
+  is_processed?: boolean
 }
 
 interface Project {
@@ -110,6 +111,8 @@ export default function App() {
   const [selectedRecord, setSelectedRecord] = useState<HistoryRecord | null>(null)
   const [lightboxOpen, setLightboxOpen] = useState<boolean>(false)
   const [expandedOcrCardId, setExpandedOcrCardId] = useState<string | null>(null)
+  const [processingIds, setProcessingIds] = useState<string[]>([])
+  const [bulkProcessing, setBulkProcessing] = useState<boolean>(false)
 
   // Projects States
   const [projectsList, setProjectsList] = useState<Project[]>([])
@@ -123,6 +126,16 @@ export default function App() {
     const timer = setInterval(getDaemonStatus, 5000)
     return () => clearInterval(timer)
   }, [serverOnline])
+
+  // Poll history records if there are pending items in the queue to update live
+  useEffect(() => {
+    if (status && status.pending_queue_size > 0) {
+      const timer = setInterval(() => {
+        fetchHistory()
+      }, 10000)
+      return () => clearInterval(timer)
+    }
+  }, [status, searchQuery])
 
   // Scroll chat window to bottom on updates
   useEffect(() => {
@@ -190,6 +203,44 @@ export default function App() {
   const clearSearch = () => {
     setSearchQuery('')
     fetchHistory('')
+  }
+
+  const handleForceProcess = async (fileId: string): Promise<HistoryRecord | null> => {
+    if (!serverOnline) return null
+    setProcessingIds(prev => [...prev, fileId])
+    try {
+      const resp = await axios.post(`/api/process/${fileId}`)
+      if (resp.status === 200) {
+        setToastMessage({ text: 'Screenshot processed successfully!', type: 'success' })
+        fetchHistory()
+        getDaemonStatus()
+        return resp.data as HistoryRecord
+      }
+    } catch (e: any) {
+      const errMsg = e.response?.data?.detail || e.message || 'Error occurred'
+      setToastMessage({ text: `Failed to process screenshot: ${errMsg}`, type: 'danger' })
+    } finally {
+      setProcessingIds(prev => prev.filter(id => id !== fileId))
+    }
+    return null
+  }
+
+  const handleProcessAll = async () => {
+    if (!serverOnline) return
+    setBulkProcessing(true)
+    try {
+      const resp = await axios.post('/api/process-all')
+      if (resp.data.status === 'success') {
+        setToastMessage({ text: 'Bulk processing triggered in background.', type: 'success' })
+        getDaemonStatus()
+        fetchHistory()
+      }
+    } catch (e: any) {
+      const errMsg = e.response?.data?.detail || e.message || 'Error occurred'
+      setToastMessage({ text: `Failed to start bulk processing: ${errMsg}`, type: 'danger' })
+    } finally {
+      setBulkProcessing(false)
+    }
   }
 
   const fetchProjects = async () => {
@@ -633,6 +684,18 @@ export default function App() {
                         </div>
                       </div>
 
+                      {status.pending_queue_size > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleProcessAll}
+                          disabled={bulkProcessing}
+                          className="w-full bg-accent-surface hover:bg-surface-container text-primary text-action-md font-semibold py-2 px-3 rounded border border-primary/20 transition-colors select-none flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <Cpu className={`w-4 h-4 ${bulkProcessing ? 'animate-spin' : ''}`} />
+                          Force Process All Queue
+                        </button>
+                      )}
+
                       {status.system_load && (
                         <div className="grid grid-cols-2 gap-3 pt-3 border-t border-surface-container text-technical-sm">
                           <div className="space-y-1 p-2 bg-surface-container-low rounded border border-surface-container-high">
@@ -688,11 +751,11 @@ export default function App() {
                         className="w-full pl-11 pr-5 h-10 text-body-md rounded bg-white border border-surface-container-high text-on-surface focus:outline-none focus:border-primary-container"
                       />
                     </div>
-                    <div className="flex gap-2 w-full sm:w-auto">
+                    <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                       <button
                         type="submit"
                         disabled={loadingHistory}
-                        className="flex-1 sm:flex-initial bg-primary-container hover:bg-primary text-white text-action-md font-medium h-10 px-6 rounded flex items-center justify-center gap-2 transition-colors disabled:opacity-50 select-none"
+                        className="flex-1 sm:flex-initial bg-primary-container hover:bg-primary text-white text-action-md font-medium h-10 px-6 rounded flex items-center justify-center gap-2 transition-colors disabled:opacity-50 select-none cursor-pointer"
                       >
                         <RefreshCw className={`w-4 h-4 ${loadingHistory ? 'animate-spin' : ''}`} />
                         Search
@@ -700,10 +763,21 @@ export default function App() {
                       <button
                         type="button"
                         onClick={clearSearch}
-                        className="bg-surface-container-low hover:bg-surface-container text-neutral-dark text-action-md font-medium h-10 px-4 rounded border border-surface-container-high transition-colors select-none"
+                        className="bg-surface-container-low hover:bg-surface-container text-neutral-dark text-action-md font-medium h-10 px-4 rounded border border-surface-container-high transition-colors select-none cursor-pointer"
                       >
                         Clear
                       </button>
+                      {status?.pending_queue_size > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleProcessAll}
+                          disabled={bulkProcessing}
+                          className="bg-accent-surface hover:bg-surface-container text-primary text-action-md font-medium h-10 px-4 rounded border border-primary/20 transition-colors select-none flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Cpu className={`w-4 h-4 ${bulkProcessing ? 'animate-spin' : ''}`} />
+                          Process All ({status.pending_queue_size})
+                        </button>
+                      )}
                     </div>
                   </form>
                 </div>
@@ -786,6 +860,11 @@ export default function App() {
                                   AFK
                                 </span>
                               )}
+                              {!rec.is_processed && (
+                                <span className="px-2 h-6 flex items-center bg-warning-light text-neutral-dark rounded-full text-indicator-bold border border-attention-yellow/30 animate-pulse-slow">
+                                  Pending
+                                </span>
+                              )}
                             </div>
 
                             <h4 className="font-semibold text-headline-sm text-neutral-dark truncate" title={rec.window_title}>
@@ -797,7 +876,7 @@ export default function App() {
                             </p>
 
                             {/* OCR snippet if present (Technical monospace font) */}
-                            {rec.ocr_text && (
+                            {rec.is_processed && rec.ocr_text && (
                               <div className="mt-3 bg-surface-container-low p-2.5 rounded border border-surface-container-high">
                                 <button
                                   onClick={() => setExpandedOcrCardId(expandedOcrCardId === rec.id ? null : rec.id)}
@@ -815,14 +894,32 @@ export default function App() {
                             )}
                           </div>
 
-                          {/* Tag Badges */}
-                          {rec.tags.length > 0 && (
-                            <div className="flex flex-wrap gap-1 pt-2 border-t border-surface-container">
-                              {rec.tags.map((tag) => (
-                                <span key={tag} className="text-[10px] font-semibold bg-accent-surface text-primary px-1.5 py-0.5 rounded">
-                                  #{tag}
-                                </span>
-                              ))}
+                          {/* Tag Badges / Force Process Option */}
+                          {rec.is_processed ? (
+                            rec.tags && rec.tags.length > 0 && (
+                              <div className="flex flex-wrap gap-1 pt-2 border-t border-surface-container">
+                                {rec.tags.map((tag) => (
+                                  <span key={tag} className="text-[10px] font-semibold bg-accent-surface text-primary px-1.5 py-0.5 rounded">
+                                    #{tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )
+                          ) : (
+                            <div className="pt-2 border-t border-surface-container">
+                              <button
+                                type="button"
+                                onClick={() => handleForceProcess(rec.id)}
+                                disabled={processingIds.includes(rec.id)}
+                                className="w-full bg-primary-container hover:bg-primary text-white text-action-md font-semibold py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors disabled:opacity-50 select-none cursor-pointer"
+                              >
+                                {processingIds.includes(rec.id) ? (
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Cpu className="w-4 h-4" />
+                                )}
+                                {processingIds.includes(rec.id) ? 'Processing...' : 'Process Screenshot'}
+                              </button>
                             </div>
                           )}
                         </div>
@@ -979,14 +1076,35 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Tag items */}
-                {selectedRecord.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-2 border-t border-surface-container">
-                    {selectedRecord.tags.map((tag) => (
-                      <span key={tag} className="text-technical-sm font-semibold bg-accent-surface border border-surface-container-high text-primary px-2 py-0.5 rounded">
-                        #{tag}
-                      </span>
-                    ))}
+                {/* Tag items / Lightbox Force Process option */}
+                {selectedRecord.is_processed ? (
+                  selectedRecord.tags && selectedRecord.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-2 border-t border-surface-container">
+                      {selectedRecord.tags.map((tag) => (
+                        <span key={tag} className="text-technical-sm font-semibold bg-accent-surface border border-surface-container-high text-primary px-2 py-0.5 rounded">
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  <div className="pt-2 border-t border-surface-container">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const updated = await handleForceProcess(selectedRecord.id)
+                        if (updated) setSelectedRecord(updated)
+                      }}
+                      disabled={processingIds.includes(selectedRecord.id)}
+                      className="w-full bg-primary-container hover:bg-primary text-white text-action-sm font-semibold py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors disabled:opacity-50 select-none cursor-pointer"
+                    >
+                      {processingIds.includes(selectedRecord.id) ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Cpu className="w-4 h-4" />
+                      )}
+                      {processingIds.includes(selectedRecord.id) ? 'Processing Screenshot...' : 'Process Screenshot Now'}
+                    </button>
                   </div>
                 )}
               </div>

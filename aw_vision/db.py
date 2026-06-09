@@ -201,6 +201,15 @@ class VisionDB:
                         unique_tags.add(t.strip())
         return sorted(list(unique_tags))
 
+    def get_record_by_id(self, record_id: str) -> dict | None:
+        """Fetch a specific record by its ID."""
+        try:
+            results = self.table.search().where(f"id = '{record_id}'").limit(1).to_list()
+            return results[0] if results else None
+        except Exception as e:
+            print(f"Error fetching record {record_id} by ID: {e}")
+            return None
+
     def nullify_expired_screenshot_path(self, record_id: str):
         """Set image_path = None for a specific record after purging its file."""
         try:
