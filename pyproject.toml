@@ -1,0 +1,44 @@
+[tool.poetry]
+name = "aw-vision"
+version = "0.1.0"
+description = "A custom ActivityWatch extension for visual and semantic memory tracking using local vision models and LanceDB."
+authors = ["Jelle <jelle@jelle.dev>"]
+readme = "README.md"
+packages = [{include = "aw_vision"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = ">=0.110.0"
+uvicorn = ">=0.28.0"
+lancedb = ">=0.6.0"
+ollama = ">=0.2.1"
+pydantic = ">=2.6.0"
+psutil = ">=5.9.0"
+pillow = ">=10.2.0"
+langgraph = ">=0.0.30"
+langchain-core = ">=0.1.30"
+langchain-community = ">=0.0.28"
+aw-client = ">=0.5.1"
+pyyaml = ">=6.0.1"
+mcp = ">=1.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+httpx = "^0.27.0"
+black = "^24.2.0"
+isort = "^5.13.0"
+flake8 = "^7.0.0"
+pre-commit = "^3.6.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 120
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
