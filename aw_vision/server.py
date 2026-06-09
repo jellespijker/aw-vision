@@ -202,10 +202,12 @@ def save_projects(projects: List[ProjectModel]):
 
 
 @app.get("/api/history")
-def get_history(limit: Optional[int] = 100, search: Optional[str] = None):
-    """Get a list of historical screenshot metadata, merging pending items from raw folder and processed ones from LanceDB."""
+def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
+    """Get a paginated list of historical screenshot metadata, merging pending items from raw folder and processed ones from LanceDB, alongside monthly timeline groupings."""
     try:
         import json
+        import math
+        from datetime import datetime
 
         # 1. Fetch pending raw screenshots
         pending_records = []
@@ -233,8 +235,9 @@ def get_history(limit: Optional[int] = 100, search: Optional[str] = None):
         except Exception as e:
             print(f"Error reading pending queue: {e}")
 
-        # 2. Fetch processed screenshots
+        # 2. Fetch processed screenshots (fetch up to 10k to allow in-memory pagination and timeline calculation)
         db_results = []
+        db_fetch_limit = 10000
         if search:
             # Embed search text for semantic search
             import requests
@@ -243,11 +246,11 @@ def get_history(limit: Optional[int] = 100, search: Optional[str] = None):
             resp = requests.post(url, json=payload, timeout=5.0)
             if resp.status_code == 200:
                 query_vector = resp.json().get("embedding", [])
-                db_results = db.search_semantic(query_vector, limit=limit)
+                db_results = db.search_semantic(query_vector, limit=db_fetch_limit)
             else:
-                db_results = db.get_all_records(limit=limit)
+                db_results = db.get_all_records(limit=db_fetch_limit)
         else:
-            db_results = db.get_all_records(limit=limit)
+            db_results = db.get_all_records(limit=db_fetch_limit)
 
         cleaned_db = []
         for r in db_results:
@@ -281,7 +284,55 @@ def get_history(limit: Optional[int] = 100, search: Optional[str] = None):
         # 4. Merge and sort globally by timestamp descending
         merged = pending_records + cleaned_db
         merged.sort(key=lambda x: x.get("timestamp", 0.0), reverse=True)
-        return merged[:limit]
+
+        total_count = len(merged)
+
+        # 5. Calculate monthly timeline groupings based on sorted records
+        seen_months = {}
+        for idx, item in enumerate(merged):
+            ts = item.get("timestamp", 0.0)
+            try:
+                dt = datetime.fromtimestamp(ts)
+                month_label = dt.strftime("%B %Y")  # e.g., "June 2026"
+            except Exception:
+                month_label = "Unknown Date"
+
+            if month_label not in seen_months:
+                # Page calculations are 1-indexed
+                target_page = (idx // limit) + 1
+                seen_months[month_label] = {
+                    "label": month_label,
+                    "count": 0,
+                    "page": target_page,
+                    "timestamp": ts,
+                }
+            seen_months[month_label]["count"] += 1
+
+        # Sort timeline by timestamp descending
+        timeline_list = list(seen_months.values())
+        timeline_list.sort(key=lambda x: x["timestamp"], reverse=True)
+
+        # 6. Apply pagination slicing
+        total_pages = math.ceil(total_count / limit) if total_count > 0 else 1
+
+        # Clamp page within valid bounds
+        current_page = page
+        if current_page < 1:
+            current_page = 1
+        elif current_page > total_pages:
+            current_page = total_pages
+
+        offset = (current_page - 1) * limit
+        paginated_items = merged[offset:offset + limit]
+
+        return {
+            "items": paginated_items,
+            "total": total_count,
+            "page": current_page,
+            "limit": limit,
+            "total_pages": total_pages,
+            "timeline": timeline_list,
+        }
 
     except Exception as e:
         import traceback
