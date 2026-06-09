@@ -82,21 +82,22 @@ interface Project {
   tracked_hours: number
 }
 
+interface TimelineEntry {
+  label: string
+  count: number
+  page: number
+  timestamp: number
+}
+
 export default function App() {
   // Theme and Tab States (Defaults to Light Corporate-Neutral Theme)
   const [darkMode, setDarkMode] = useState<boolean>(false)
   const [activeTab, setActiveTab] = useState<'chat' | 'gallery' | 'projects'>('chat')
   
   // API and Connection States
-  const [serverOnline, setServerOnline] = useState<boolean>(false)
+  const [serverOnline, setServerOnline] = useState<boolean>(true)
+  const [status, setStatus] = useState<DaemonStatus | null>(null)
   const [loadingStatus, setLoadingStatus] = useState<boolean>(false)
-  const [status, setStatus] = useState<DaemonStatus>({
-    watcher_running: false,
-    processor_running: false,
-    pending_queue_size: 0,
-    processed_database_size: 0,
-    system_load: { cpu_percent: 0, memory_percent: 0 }
-  })
 
   // Chat/Agent States
   const [agentPrompt, setAgentPrompt] = useState<string>('')
@@ -108,6 +109,11 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [loadingHistory, setLoadingHistory] = useState<boolean>(false)
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>([])
+  const [currentPage, setCurrentPage] = useState<number>(1)
+  const [totalPages, setTotalPages] = useState<number>(1)
+  const [totalCount, setTotalCount] = useState<number>(0)
+  const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([])
+  const [pageSize] = useState<number>(30)
   const [selectedRecord, setSelectedRecord] = useState<HistoryRecord | null>(null)
   const [lightboxOpen, setLightboxOpen] = useState<boolean>(false)
   const [expandedOcrCardId, setExpandedOcrCardId] = useState<string | null>(null)
@@ -131,11 +137,11 @@ export default function App() {
   useEffect(() => {
     if (status && status.pending_queue_size > 0) {
       const timer = setInterval(() => {
-        fetchHistory()
+        fetchHistory(currentPage)
       }, 10000)
       return () => clearInterval(timer)
     }
-  }, [status, searchQuery])
+  }, [status, searchQuery, currentPage])
 
   // Scroll chat window to bottom on updates
   useEffect(() => {
@@ -160,7 +166,7 @@ export default function App() {
       if (resp.status === 200) {
         setServerOnline(true)
         setStatus(resp.data)
-        fetchHistory()
+        fetchHistory(1)
         fetchProjects()
       }
     } catch (e) {
@@ -182,17 +188,21 @@ export default function App() {
     }
   }
 
-  const fetchHistory = async (queryOverride?: string) => {
+  const fetchHistory = async (page: number = 1, queryOverride?: string) => {
     if (!serverOnline) return
     setLoadingHistory(true)
     try {
       const q = queryOverride !== undefined ? queryOverride : searchQuery
-      let url = '/api/history?limit=30'
+      let url = `/api/history?page=${page}&limit=${pageSize}`
       if (q && q.trim()) {
         url += `&search=${encodeURIComponent(q.trim())}`
       }
       const resp = await axios.get(url)
-      setHistoryRecords(resp.data)
+      setHistoryRecords(resp.data.items || [])
+      setTotalCount(resp.data.total || 0)
+      setCurrentPage(resp.data.page || 1)
+      setTotalPages(resp.data.total_pages || 1)
+      setTimelineEntries(resp.data.timeline || [])
     } catch (e) {
       console.error('Error loading screenshot history', e)
     } finally {
@@ -202,7 +212,7 @@ export default function App() {
 
   const clearSearch = () => {
     setSearchQuery('')
-    fetchHistory('')
+    fetchHistory(1, '')
   }
 
   const handleForceProcess = async (fileId: string): Promise<HistoryRecord | null> => {
@@ -212,7 +222,7 @@ export default function App() {
       const resp = await axios.post(`/api/process/${fileId}`)
       if (resp.status === 200) {
         setToastMessage({ text: 'Screenshot processed successfully!', type: 'success' })
-        fetchHistory()
+        fetchHistory(currentPage)
         getDaemonStatus()
         return resp.data as HistoryRecord
       }
@@ -233,7 +243,7 @@ export default function App() {
       if (resp.data.status === 'success') {
         setToastMessage({ text: 'Bulk processing triggered in background.', type: 'success' })
         getDaemonStatus()
-        fetchHistory()
+        fetchHistory(currentPage)
       }
     } catch (e: any) {
       const errMsg = e.response?.data?.detail || e.message || 'Error occurred'
@@ -313,6 +323,19 @@ export default function App() {
     if (!ts) return ''
     const d = new Date(ts * 1000)
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  }
+
+  const getPageRange = () => {
+    let startPage = Math.max(1, currentPage - 2)
+    let endPage = Math.min(totalPages, startPage + 4)
+    if (endPage - startPage < 4) {
+      startPage = Math.max(1, endPage - 4)
+    }
+    const range = []
+    for (let i = startPage; i <= endPage; i++) {
+      range.push(i)
+    }
+    return range
   }
 
   const getProgressPercent = (hours: number) => {
@@ -471,7 +494,7 @@ export default function App() {
               {darkMode ? <Sun className="w-4 h-4 text-attention-yellow" /> : <Moon className="w-4 h-4 text-primary" />}
             </button>
 
-            {serverOnline && (
+            {serverOnline && status && (
               <>
                 {/* Active Daemon Indicators (Pill shape reserved exclusively for Status Badges) */}
                 <div className="bg-surface-container-low border border-surface-container-high px-3 h-10 rounded-full flex items-center gap-2 text-indicator-bold text-neutral-dark">
@@ -517,7 +540,7 @@ export default function App() {
                     : 'border-transparent text-text-secondary hover:text-neutral-dark hover:bg-surface-container-low'
                 }`}
               >
-                <ImageIcon className="w-4 h-4" /> Screenshot Library &amp; Search
+                <ImageIcon className="w-4 h-4" /> Screenshot Library &amp; Search {totalCount > 0 && `(${totalCount})`}
               </button>
               <button
                 onClick={() => setActiveTab('projects')}
@@ -653,7 +676,8 @@ export default function App() {
 
                 {/* Queue Stats Side panel */}
                 <div className="space-y-6">
-                  <div className="bg-surface-container-lowest border border-surface-container-high p-5 rounded-lg">
+                  {status && (
+                    <div className="bg-surface-container-lowest border border-surface-container-high p-5 rounded-lg">
                     <h3 className="font-semibold text-headline-sm text-neutral-dark mb-4 flex items-center gap-2">
                       <Database className="w-4 h-4 text-primary-container" /> System Pipeline Queue
                     </h3>
@@ -721,6 +745,7 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+                )}
 
                   <div className="p-5 rounded-lg border border-surface-container-high bg-white text-neutral-dark">
                     <h3 className="font-semibold text-headline-sm mb-2 flex items-center gap-2">
@@ -740,7 +765,7 @@ export default function App() {
                 
                 {/* Search Header (Flat corporate search card) */}
                 <div className="bg-surface-container-lowest border border-surface-container-high p-4 rounded-lg">
-                  <form onSubmit={(e) => { e.preventDefault(); fetchHistory() }} className="flex flex-col sm:flex-row items-center gap-3">
+                  <form onSubmit={(e) => { e.preventDefault(); fetchHistory(1) }} className="flex flex-col sm:flex-row items-center gap-3">
                     <div className="relative flex-1 w-full">
                       <Search className="w-4 h-4 text-text-secondary absolute left-4 top-1/2 -translate-y-1/2" />
                       <input
@@ -767,7 +792,7 @@ export default function App() {
                       >
                         Clear
                       </button>
-                      {status?.pending_queue_size > 0 && (
+                      {(status?.pending_queue_size ?? 0) > 0 && (
                         <button
                           type="button"
                           onClick={handleProcessAll}
@@ -775,7 +800,7 @@ export default function App() {
                           className="bg-accent-surface hover:bg-surface-container text-primary text-action-md font-medium h-10 px-4 rounded border border-primary/20 transition-colors select-none flex items-center gap-1.5 cursor-pointer"
                         >
                           <Cpu className={`w-4 h-4 ${bulkProcessing ? 'animate-spin' : ''}`} />
-                          Process All ({status.pending_queue_size})
+                          Process All ({status?.pending_queue_size ?? 0})
                         </button>
                       )}
                     </div>
@@ -797,7 +822,8 @@ export default function App() {
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {historyRecords.map((rec) => (
                       <div
                         key={rec.id || Math.random().toString()}
@@ -926,7 +952,42 @@ export default function App() {
                       </div>
                     ))}
                   </div>
-                )}
+
+                  {/* Pagination Controls */}
+                  {totalPages > 1 && (
+                    <div className="flex justify-center items-center gap-2 mt-8 pt-6 border-t border-surface-container-high font-messina select-none">
+                      <button
+                        onClick={() => fetchHistory(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        className="h-10 px-4 rounded border border-surface-container-high bg-surface-container-lowest hover:bg-surface-container-low text-neutral-dark text-action-md font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center"
+                      >
+                        Previous
+                      </button>
+                      
+                      {getPageRange().map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => fetchHistory(p)}
+                          className={`h-10 w-10 rounded border text-action-md font-medium flex items-center justify-center transition-colors cursor-pointer ${
+                            currentPage === p
+                              ? 'bg-primary-container border-primary-container text-white font-semibold'
+                              : 'border-surface-container-high bg-surface-container-lowest hover:bg-surface-container-low text-neutral-dark'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      ))}
+
+                      <button
+                        onClick={() => fetchHistory(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        className="h-10 px-4 rounded border border-surface-container-high bg-surface-container-lowest hover:bg-surface-container-low text-neutral-dark text-action-md font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </>)}
               </div>
             )}
 
@@ -1108,6 +1169,41 @@ export default function App() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Floating Google Photos-Style Timeline Scrollbar */}
+        {activeTab === 'gallery' && timelineEntries.length > 1 && (
+          <div className="fixed right-6 top-1/2 -translate-y-1/2 z-40 hidden xl:flex flex-col items-end gap-4 p-4 bg-surface-container-lowest border border-surface-container-high rounded max-h-[80vh] overflow-y-auto shadow-none">
+            <div className="text-[10px] font-semibold font-messina text-text-secondary uppercase tracking-wider mb-2 border-b border-surface-container-high pb-1 w-full text-right">
+              Timeline
+            </div>
+            <div className="relative flex flex-col gap-6 pr-1.5 py-2 border-r-2 border-surface-container-high">
+              {timelineEntries.map((entry) => {
+                const isActive = currentPage === entry.page
+                return (
+                  <div
+                    key={entry.label}
+                    onClick={() => fetchHistory(entry.page)}
+                    className="flex items-center gap-3 group cursor-pointer justify-end mr-[-8px]"
+                    title={`${entry.label} (${entry.count} captures)`}
+                  >
+                    <span className={`text-[10px] font-semibold font-messina uppercase tracking-wider transition-colors text-right select-none ${
+                      isActive 
+                        ? 'text-primary-container font-bold' 
+                        : 'text-text-secondary group-hover:text-neutral-dark'
+                    }`}>
+                      {entry.label}
+                    </span>
+                    <div className={`w-3.5 h-3.5 rounded-full border transition-all ${
+                      isActive
+                        ? 'bg-primary-container border-primary-container scale-110'
+                        : 'bg-white border-outline-variant group-hover:border-primary-container'
+                    }`} />
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}
