@@ -5,7 +5,8 @@ from typing import List, Optional
 import psutil
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from aw_vision.agent import AIMessage, HumanMessage, agent_app
@@ -244,3 +245,24 @@ def get_history(limit: Optional[int] = 100, search: Optional[str] = None):
 
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to fetch history: {e}")
+
+
+# Serve compiled static React files in production/standalone mode
+frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+
+if frontend_dist.exists():
+    app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
+
+    @app.get("/{fallback_path:path}")
+    def serve_frontend(fallback_path: str):
+        # Exclude API endpoints from routing fallback
+        if fallback_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found")
+
+        index_file = frontend_dist / "index.html"
+        if index_file.exists():
+            return HTMLResponse(content=index_file.read_text(), status_code=200)
+        return HTMLResponse(
+            content="<h1>Frontend built assets missing. Please run 'npm run build' inside frontend directory.</h1>",
+            status_code=404,
+        )
