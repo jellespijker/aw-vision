@@ -145,7 +145,7 @@ class BulkProcessor:
         """Fetch vector embedding for the description using Ollama."""
         try:
             url = f"{config.ollama_host}/api/embeddings"
-            payload = {"model": config.embedding_model, "prompt": text}
+            payload = {"model": config.embedding_model, "prompt": text, "keep_alive": 0}
             resp = requests.post(url, json=payload, timeout=30.0)
             if resp.status_code == 200:
                 return resp.json().get("embedding", [])
@@ -174,6 +174,7 @@ class BulkProcessor:
                 model=config.ocr_model,
                 messages=[{"role": "user", "content": prompt, "images": [str(img_path)]}],
                 options={"temperature": 0.1},
+                keep_alive=0,
             )
             ocr_text = response.get("message", {}).get("content", "").strip()
             msg2 = f"OCR Extracted text length: {len(ocr_text)}"
@@ -445,6 +446,7 @@ JSON Schema:
                 messages=[{"role": "user", "content": prompt_text, "images": [str(vision_img_path)]}],
                 format="json",
                 options={"temperature": 0.2},
+                keep_alive=0,
             )
 
             # Parse JSON response

@@ -26,7 +26,7 @@ class VisionDB:
         """Query Ollama to find the exact embedding dimension for the configured model."""
         try:
             url = f"{config.ollama_host}/api/embeddings"
-            payload = {"model": config.embedding_model, "prompt": "hello"}
+            payload = {"model": config.embedding_model, "prompt": "hello", "keep_alive": 0}
             resp = requests.post(url, json=payload, timeout=15.0)
             if resp.status_code == 200:
                 emb = resp.json().get("embedding", [])

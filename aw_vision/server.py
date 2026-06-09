@@ -90,7 +90,7 @@ def get_status():
     # Check if aw-server is online on port 5600
     aw_server_online = False
     try:
-        resp = requests.get("http://127.0.0.1:5600/api/0/about", timeout=1.0)
+        resp = requests.get("http://127.0.0.1:5600/api/0/buckets", timeout=1.0)
         if resp.status_code == 200:
             aw_server_online = True
     except Exception:
@@ -275,7 +275,7 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
             # Embed search text for semantic search
             import requests
             url = f"{config.ollama_host}/api/embeddings"
-            payload = {"model": config.embedding_model, "prompt": search}
+            payload = {"model": config.embedding_model, "prompt": search, "keep_alive": 0}
             resp = requests.post(url, json=payload, timeout=5.0)
             if resp.status_code == 200:
                 query_vector = resp.json().get("embedding", [])

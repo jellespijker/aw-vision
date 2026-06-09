@@ -22,7 +22,7 @@ def tool_search_screenshots_semantic(query: str, limit: int = 5) -> str:
     try:
         # Step 1: Embed query via Ollama
         url = f"{config.ollama_host}/api/embeddings"
-        payload = {"model": config.embedding_model, "prompt": query}
+        payload = {"model": config.embedding_model, "prompt": query, "keep_alive": 0}
         resp = requests.post(url, json=payload, timeout=30.0)
         if resp.status_code != 200:
             return f"Error embedding query: {resp.text}"
@@ -200,6 +200,7 @@ def run_agent_node(state: AgentState) -> AgentState:
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": 0.1},
+            "keep_alive": 0,
         }
         resp = requests.post(url, json=payload, timeout=60.0)
         if resp.status_code == 200:
