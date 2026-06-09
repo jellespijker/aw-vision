@@ -13,6 +13,7 @@ DEFAULT_CONFIG = {
     "watcher": {
         "screenshot_interval_seconds": 60,
         "screenshots_dir": "~/.local/share/aw-vision/screenshots",
+        "capture_mode": "both",
     },
     "processing": {
         "cpu_threshold_percent": 30.0,
@@ -103,6 +104,10 @@ class Config:
         p = Path(expanded)
         p.mkdir(parents=True, exist_ok=True)
         return p
+
+    @property
+    def capture_mode(self) -> str:
+        return self.settings["watcher"].get("capture_mode", "both")
 
     @property
     def db_dir(self) -> Path:

@@ -30,13 +30,23 @@ class ScreenshotWatcher:
 
         return socket.gethostname()
 
-    def _capture_screenshot_wayland(self, output_path: Path) -> bool:
+    def _capture_screenshot_wayland(self, output_path: Path, mode: str = "active") -> bool:
         """KDE Wayland screenshot capture using spectacle or grim."""
         # Try spectacle (native KDE)
         try:
+            cmd = ["spectacle"]
+            if mode == "active":
+                cmd.append("-a")  # Capture active window
+            elif mode == "fullscreen":
+                cmd.append("-f")  # Capture entire desktop
+            elif mode == "current":
+                cmd.append("-m")  # Capture current monitor
+
             # -b: background/non-interactive, -n: no notification, -o: output file
+            cmd.extend(["-b", "-n", "-o", str(output_path)])
+
             res = subprocess.run(
-                ["spectacle", "-b", "-n", "-o", str(output_path)],
+                cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=10.0,
@@ -46,7 +56,7 @@ class ScreenshotWatcher:
         except Exception:
             pass
 
-        # Try grim (general Wayland tool)
+        # Try grim (general Wayland tool) - falls back to fullscreen
         try:
             res = subprocess.run(
                 ["grim", str(output_path)],
@@ -130,8 +140,19 @@ class ScreenshotWatcher:
         raw_image_path = self.raw_dir / filename
         meta_path = self.raw_dir / f"{int(timestamp)}_{file_id}.json"
 
-        # 2. Capture screen only if user is active
-        success = self._capture_screenshot_wayland(raw_image_path)
+        # 2. Capture screen based on configured capture mode
+        mode = config.capture_mode
+        if mode == "both":
+            # Capture fullscreen as context archive
+            full_filename = f"{int(timestamp)}_{file_id}_full.png"
+            full_path = self.raw_dir / full_filename
+            self._capture_screenshot_wayland(full_path, mode="fullscreen")
+
+            # Capture active window as primary (used for UI and OCR)
+            success = self._capture_screenshot_wayland(raw_image_path, mode="active")
+        else:
+            success = self._capture_screenshot_wayland(raw_image_path, mode=mode)
+
         if not success:
             print(f"[{datetime.now()}] Screenshot capture failed.")
             return

@@ -103,6 +103,15 @@ class BulkProcessor:
                         except Exception as e:
                             print(f"Error deleting file {p}: {e}")
 
+                    # Also delete corresponding full screenshot if present (for retention)
+                    full_p = p.parent / f"{p.stem}_full.png"
+                    if full_p.exists():
+                        try:
+                            full_p.unlink()
+                            print(f"Deleted expired full screenshot file: {full_p}")
+                        except Exception as e:
+                            print(f"Error deleting full file {full_p}: {e}")
+
                     # Also check raw directory for same filename if not cleared
                     raw_p = self.raw_dir / p.name
                     if raw_p.exists():
@@ -111,6 +120,14 @@ class BulkProcessor:
                             print(f"Deleted expired raw file: {raw_p}")
                         except Exception as e:
                             print(f"Error deleting raw file {raw_p}: {e}")
+
+                    raw_full_p = self.raw_dir / f"{p.stem}_full.png"
+                    if raw_full_p.exists():
+                        try:
+                            raw_full_p.unlink()
+                            print(f"Deleted expired raw full file: {raw_full_p}")
+                        except Exception as e:
+                            print(f"Error deleting raw full file {raw_full_p}: {e}")
 
                     db.nullify_expired_screenshot_path(rec_id)
                     purged_count += 1
@@ -181,11 +198,16 @@ JSON Schema:
 }}
 """
 
+            # Determine which image to send to the vision model for full context analysis
+            full_img_filename = f"{img_path.stem}_full.png"
+            full_img_path = img_path.parent / full_img_filename
+            vision_img_path = full_img_path if full_img_path.exists() else img_path
+
             # Call Ollama chat vision endpoint
             client = ollama.Client(host=config.ollama_host)
             response = client.chat(
                 model=config.vision_model,
-                messages=[{"role": "user", "content": prompt_text, "images": [str(img_path)]}],
+                messages=[{"role": "user", "content": prompt_text, "images": [str(vision_img_path)]}],
                 format="json",
                 options={"temperature": 0.2},
             )
@@ -225,6 +247,8 @@ JSON Schema:
 
             # Move image & metadata to processed directory
             shutil.move(str(img_path), str(self.processed_dir / img_path.name))
+            if full_img_path.exists():
+                shutil.move(str(full_img_path), str(self.processed_dir / full_img_filename))
             meta_path.unlink()  # Delete temporary raw metadata JSON file
 
             print(f"[{datetime.now()}] Successfully processed screenshot. Classified as project: {project_number}")
