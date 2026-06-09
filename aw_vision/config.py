@@ -16,7 +16,7 @@ DEFAULT_CONFIG = {
         "capture_mode": "both",
     },
     "processing": {
-        "cpu_threshold_percent": 30.0,
+        "cpu_threshold_percent": 80.0,
         "memory_threshold_percent": 80.0,
         "gpu_threshold_percent": 50.0,
         "check_interval_seconds": 10,
