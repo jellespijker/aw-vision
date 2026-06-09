@@ -94,3 +94,75 @@ def test_fastapi_endpoints():
     data = resp.json()
     assert "projects" in data
     assert "raw_stats" in data
+
+
+def test_snapshot_reprocessing(tmp_path):
+    """Test snapshot reprocessing API endpoint and database idempotency."""
+    table = db.table
+    assert table is not None
+
+    test_id = "reprocess-test-uuid-456"
+    try:
+        table.delete(f"id = '{test_id}'")
+    except Exception:
+        pass
+
+    # Create dummy processed image on disk
+    processed_dir = config.screenshots_dir / "processed"
+    processed_dir.mkdir(parents=True, exist_ok=True)
+
+    test_img = processed_dir / f"reprocess_test_{test_id}.png"
+    test_img.write_text("dummy image content")
+
+    dummy_record = {
+        "id": test_id,
+        "timestamp": 123456789.0,
+        "image_path": str(test_img),
+        "window_title": "Reprocess Window Title",
+        "app_name": "ReprocessApp",
+        "is_afk": False,
+        "description": "Reprocess Description",
+        "ocr_text": "Reprocess OCR Text",
+        "tags": ["reprocess", "test"],
+        "project_number": "PRJ-REPROCESS",
+        "vector": [0.2] * db.get_embedding_dimension(),
+    }
+
+    # Test database insert (idempotent overwrite)
+    db.insert_screenshot(dummy_record)
+    # Insert again to verify idempotency delete works without raising errors
+    db.insert_screenshot(dummy_record)
+
+    # Call API to reprocess
+    payload = {
+        "ids": [test_id],
+        "reprocess_ocr": False
+    }
+    resp = client.post("/api/reprocess", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert data["queued_count"] == 1
+    assert data["skipped_count"] == 0
+
+    # Verify that raw folder contains the copied image and the reconstructed JSON file
+    raw_dir = config.screenshots_dir / "raw"
+    copied_img = raw_dir / f"reprocess_test_{test_id}.png"
+    reconstructed_json = raw_dir / f"reprocess_test_{test_id}.json"
+
+    assert copied_img.exists()
+    assert reconstructed_json.exists()
+
+    with open(reconstructed_json, "r") as f:
+        meta = json.load(f)
+    assert meta["id"] == test_id
+    assert meta["ocr_text"] == "Reprocess OCR Text"
+
+    # Clean up files created
+    copied_img.unlink()
+    reconstructed_json.unlink()
+    test_img.unlink()
+    try:
+        table.delete(f"id = '{test_id}'")
+    except Exception:
+        pass

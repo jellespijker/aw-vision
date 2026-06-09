@@ -70,6 +70,15 @@ class LabelRequest(BaseModel):
     project_number: Optional[str] = None
 
 
+class ReprocessRequest(BaseModel):
+    ids: Optional[List[str]] = None
+    limit: Optional[int] = None
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+    reprocess_ocr: bool = False
+    all: bool = False
+
+
 # ---------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------
@@ -119,6 +128,7 @@ def get_status():
         "processor_running": processor.running,
         "pending_queue_size": pending_count,
         "processed_database_size": total_records,
+        "processing_ids": list(processor.processing_ids),
         "system_load": {
             "cpu_percent": psutil.cpu_percent(),
             "memory_percent": psutil.virtual_memory().percent,
@@ -519,6 +529,136 @@ def process_all_screenshots():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to trigger bulk processing: {e}")
+
+
+@app.post("/api/reprocess")
+def reprocess_snapshots(payload: ReprocessRequest):
+    """Reprocess already processed desktop snapshots with various filters."""
+    import shutil
+    import json
+    from pathlib import Path
+
+    try:
+        # 1. Fetch matching database records
+        records = []
+        if payload.ids:
+            for rid in payload.ids:
+                rec = db.get_record_by_id(rid)
+                if rec:
+                    records.append(rec)
+        elif payload.all:
+            # Retrieve all records from LanceDB (up to a large limit)
+            records = db.get_all_records(limit=100000)
+        elif payload.start_time is not None and payload.end_time is not None:
+            # Query by timestamp range
+            where_clause = f"timestamp >= {payload.start_time} AND timestamp <= {payload.end_time}"
+            records = db.query_metadata(where_clause, limit=100000)
+        elif payload.limit:
+            # Retrieve latest X records
+            records = db.get_all_records(limit=payload.limit)
+        else:
+            raise HTTPException(status_code=400, detail="Must provide ids, limit, start_time/end_time, or set all=True.")
+
+        if not records:
+            return {
+                "status": "success",
+                "message": "No matching database records found for the given criteria.",
+                "queued_count": 0,
+                "skipped_count": 0
+            }
+
+        queued_count = 0
+        skipped_count = 0
+        skipped_purged = []
+        errors = []
+
+        processed_dir = config.screenshots_dir / "processed"
+        raw_dir = config.screenshots_dir / "raw"
+
+        # 2. Re-queue records by copying files and writing metadata JSON
+        for r in records:
+            rec_id = r.get("id")
+            image_path_str = r.get("image_path")
+
+            if not image_path_str or not rec_id:
+                skipped_count += 1
+                continue
+
+            img_path = Path(image_path_str)
+            # If path is stored as relative or absolute, normalize it
+            if not img_path.is_absolute():
+                img_path = processed_dir / img_path.name
+
+            if not img_path.exists():
+                skipped_count += 1
+                skipped_purged.append(rec_id)
+                continue
+
+            # Ensure we are not currently processing this snapshot
+            if rec_id in processor.processing_ids:
+                # Already in processing queue
+                skipped_count += 1
+                continue
+
+            try:
+                # Copy primary processed image back to raw directory
+                raw_img_path = raw_dir / img_path.name
+                shutil.copy(str(img_path), str(raw_img_path))
+
+                # Copy full context image if it exists
+                full_img_filename = f"{img_path.stem}_full.png"
+                full_img_path = img_path.parent / full_img_filename
+                if full_img_path.exists():
+                    shutil.copy(str(full_img_path), str(raw_dir / full_img_filename))
+
+                # Build reconstructed raw metadata JSON
+                metadata = {
+                    "id": rec_id,
+                    "timestamp": r.get("timestamp"),
+                    "image_filename": img_path.name,
+                    "window_title": r.get("window_title", "Unknown"),
+                    "app_name": r.get("app_name", "Unknown"),
+                    "is_afk": bool(r.get("is_afk", False)),
+                }
+
+                # Handle OCR bypass
+                if not payload.reprocess_ocr:
+                    metadata["ocr_text"] = r.get("ocr_text")
+                else:
+                    metadata["ocr_text"] = None
+
+                # Write metadata file inside raw folder to trigger ingestion Phase 2 (Vision)
+                meta_path = raw_dir / f"{img_path.stem}.json"
+                with open(meta_path, "w", encoding="utf-8") as mf:
+                    json.dump(metadata, mf, indent=2)
+
+                queued_count += 1
+            except Exception as e:
+                errors.append(f"Error copying {rec_id}: {str(e)}")
+                skipped_count += 1
+
+        # 3. Trigger bulk processing in background if any items were queued
+        if queued_count > 0:
+            processor.force_process_all()
+
+        message = f"Successfully queued {queued_count} snapshots for reprocessing."
+        if skipped_count > 0:
+            message += f" Skipped {skipped_count} items."
+
+        return {
+            "status": "success",
+            "message": message,
+            "queued_count": queued_count,
+            "skipped_count": skipped_count,
+            "skipped_purged_ids": skipped_purged,
+            "errors": errors
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to initiate snapshot reprocessing: {e}")
 
 
 # Serve compiled static React files in production/standalone mode

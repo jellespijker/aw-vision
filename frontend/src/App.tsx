@@ -52,6 +52,7 @@ interface DaemonStatus {
   processor_running: boolean
   pending_queue_size: number
   processed_database_size: number
+  processing_ids?: string[]
   system_load: SystemLoad
   aw_server_online?: boolean
   ollama_online?: boolean
@@ -127,6 +128,9 @@ export default function App() {
   const [expandedOcrCardId, setExpandedOcrCardId] = useState<string | null>(null)
   const [processingIds, setProcessingIds] = useState<string[]>([])
   const [bulkProcessing, setBulkProcessing] = useState<boolean>(false)
+  const [reprocessOcr, setReprocessOcr] = useState<boolean>(false)
+  const [reprocessRange, setReprocessRange] = useState<string>('last10')
+  const [reprocessing, setReprocessing] = useState<boolean>(false)
 
   const [cardViewFull, setCardViewFull] = useState<Record<string, boolean>>({})
   const [lightboxViewFull, setLightboxViewFull] = useState<boolean>(false)
@@ -156,6 +160,41 @@ export default function App() {
       return () => clearInterval(timer)
     }
   }, [status, searchQuery, currentPage])
+
+  // Synchronize processingIds with backend status.processing_ids
+  useEffect(() => {
+    if (status && status.processing_ids) {
+      setProcessingIds(prev => {
+        const backendIds = status.processing_ids || []
+        const finishedIds = prev.filter(id => !backendIds.includes(id))
+        
+        finishedIds.forEach(id => {
+          if (pollingIntervals.current[id]) {
+            clearInterval(pollingIntervals.current[id])
+            delete pollingIntervals.current[id]
+          }
+        })
+
+        if (finishedIds.length > 0) {
+          setTimeout(() => {
+            fetchHistory(currentPage)
+          }, 500)
+        }
+
+        return backendIds
+      })
+    }
+  }, [status])
+
+  // Automatically update the active Lightbox record when the gallery history refreshes
+  useEffect(() => {
+    if (selectedRecord && historyRecords.length > 0) {
+      const match = historyRecords.find(r => r.id === selectedRecord.id)
+      if (match && JSON.stringify(match) !== JSON.stringify(selectedRecord)) {
+        setSelectedRecord(match)
+      }
+    }
+  }, [historyRecords, selectedRecord])
 
   // Scroll chat window to bottom on updates
   useEffect(() => {
@@ -294,6 +333,108 @@ export default function App() {
     } finally {
       setBulkProcessing(false)
     }
+  }
+
+  const handleReprocessSnapshots = async (options: {
+    ids?: string[]
+    limit?: number
+    startTime?: number
+    endTime?: number
+    all?: boolean
+    reprocessOcr?: boolean
+  }): Promise<boolean> => {
+    if (!serverOnline) return false
+
+    const { ids, limit, startTime, endTime, all, reprocessOcr = false } = options
+    const targetId = ids && ids.length === 1 ? ids[0] : null
+
+    if (targetId) {
+      setProcessingIds(prev => Array.from(new Set([...prev, targetId])))
+    } else {
+      setReprocessing(true)
+    }
+
+    const pollLogs = async () => {
+      if (!targetId) return
+      try {
+        const resp = await axios.get(`/api/process/${targetId}/logs`)
+        if (resp.data && resp.data.logs) {
+          setLogs(prev => ({ ...prev, [targetId]: resp.data.logs }))
+        }
+      } catch (err) {
+        console.error("Error polling logs:", err)
+      }
+    }
+
+    let interval: any = null
+    if (targetId) {
+      pollLogs()
+      interval = setInterval(pollLogs, 1000)
+      pollingIntervals.current[targetId] = interval
+    }
+
+    try {
+      const payload: any = { reprocess_ocr: reprocessOcr }
+      if (ids) payload.ids = ids
+      if (limit) payload.limit = limit
+      if (startTime !== undefined) payload.start_time = startTime
+      if (endTime !== undefined) payload.end_time = endTime
+      if (all !== undefined) payload.all = all
+
+      const resp = await axios.post('/api/reprocess', payload)
+
+      if (resp.status === 200) {
+        setToastMessage({ text: resp.data.message || 'Reprocessing triggered successfully!', type: 'success' })
+        getDaemonStatus()
+        
+        // Wait briefly and refresh
+        setTimeout(() => {
+          fetchHistory(currentPage)
+        }, 1500)
+        
+        return true
+      }
+    } catch (e: any) {
+      const errMsg = e.response?.data?.detail || e.message || 'Error occurred'
+      setToastMessage({ text: `Failed to reprocess: ${errMsg}`, type: 'danger' })
+    } finally {
+      if (!targetId) {
+        setReprocessing(false)
+      } else {
+        // Set safety timeout to clear the single-item processing state if it gets stuck
+        setTimeout(() => {
+          if (pollingIntervals.current[targetId]) {
+            clearInterval(pollingIntervals.current[targetId])
+            delete pollingIntervals.current[targetId]
+          }
+          setProcessingIds(prev => prev.filter(id => id !== targetId))
+          fetchHistory(currentPage)
+        }, 45000)
+      }
+    }
+    return false
+  }
+
+  const handleBulkReprocessSidebar = async () => {
+    let options: any = { reprocessOcr }
+    
+    if (reprocessRange === 'all') {
+      options.all = true
+    } else if (reprocessRange === 'last10') {
+      options.limit = 10
+    } else if (reprocessRange === 'last50') {
+      options.limit = 50
+    } else if (reprocessRange === 'today') {
+      const start = new Date()
+      start.setHours(0, 0, 0, 0)
+      options.startTime = start.getTime() / 1000
+      options.endTime = Date.now() / 1000
+    } else if (reprocessRange === 'last24h') {
+      options.startTime = (Date.now() - 24 * 60 * 60 * 1000) / 1000
+      options.endTime = Date.now() / 1000
+    }
+
+    await handleReprocessSnapshots(options)
   }
 
   const fetchProjects = async () => {
@@ -861,6 +1002,59 @@ export default function App() {
                   </div>
                 )}
 
+                {/* Database Reprocessing Controls */}
+                {status && (
+                  <div className="bg-surface-container-lowest border border-surface-container-high p-5 rounded-lg">
+                    <h3 className="font-semibold text-headline-sm text-neutral-dark mb-4 flex items-center gap-2">
+                      <RefreshCw className="w-4 h-4 text-primary-container" /> Reprocess History
+                    </h3>
+
+                    <div className="space-y-4 font-messina">
+                      <div className="space-y-1.5">
+                        <label className="text-body-sm font-semibold text-text-secondary">Range to Reprocess</label>
+                        <select
+                          value={reprocessRange}
+                          onChange={(e) => setReprocessRange(e.target.value)}
+                          className="w-full bg-surface-container-low border border-surface-container-high h-10 px-3 rounded text-body-md text-neutral-dark outline-none cursor-pointer hover:border-primary-container transition-colors"
+                        >
+                          <option value="last10">Latest 10 Snapshots</option>
+                          <option value="last50">Latest 50 Snapshots</option>
+                          <option value="today">Today's Sessions</option>
+                          <option value="last24h">Past 24 Hours</option>
+                          <option value="all">Entire Database (OCR cached)</option>
+                        </select>
+                      </div>
+
+                      <div className="flex items-center gap-2.5 py-1 select-none">
+                        <input
+                          type="checkbox"
+                          id="reprocessOcrCheckbox"
+                          checked={reprocessOcr}
+                          onChange={(e) => setReprocessOcr(e.target.checked)}
+                          className="w-4 h-4 rounded border-surface-container-high text-primary focus:ring-primary cursor-pointer"
+                        />
+                        <label htmlFor="reprocessOcrCheckbox" className="text-body-sm font-medium text-neutral-dark cursor-pointer">
+                          Include OCR Sweep (Slow)
+                        </label>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleBulkReprocessSidebar}
+                        disabled={reprocessing || bulkProcessing}
+                        className="w-full bg-neutral-dark hover:bg-neutral text-white text-action-md font-semibold h-10 rounded border border-neutral-dark transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${(reprocessing || bulkProcessing) ? 'animate-spin' : ''}`} />
+                        {reprocessing ? 'Reprocessing...' : 'Trigger Bulk Reprocess'}
+                      </button>
+
+                      <div className="p-3 bg-surface-container-low rounded border border-surface-container-high text-technical-sm text-text-secondary leading-relaxed">
+                        OCR-cached reprocessing runs in seconds without Ollama's OCR overhead, ideal for updating summaries or project labels.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                   <div className="p-5 rounded-lg border border-surface-container-high bg-white text-neutral-dark">
                     <h3 className="font-semibold text-headline-sm mb-2 flex items-center gap-2">
                       <Shield className="w-5 h-5 text-primary-container" /> 100% Local Privacy
@@ -997,7 +1191,7 @@ export default function App() {
                           </span>
 
                           {rec.is_processed && (
-                            <div className="absolute top-2 left-2 z-10 flex items-center gap-1 bg-white/95 border border-surface-container-high px-2 py-1 rounded select-none font-messina" onClick={(e) => e.stopPropagation()}>
+                            <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 bg-white/95 border border-surface-container-high px-2 py-1 rounded select-none font-messina" onClick={(e) => e.stopPropagation()}>
                               {rec.human_labeled && (
                                 <div className="flex items-center gap-0.5 text-primary font-bold text-[9px] uppercase tracking-wider pr-1.5 border-r border-surface-container-high" title="Manually Verified Project Label">
                                   <User className="w-3 h-3 text-primary-container" />
@@ -1019,6 +1213,16 @@ export default function App() {
                                   </option>
                                 ))}
                               </select>
+                              
+                              <button
+                                type="button"
+                                onClick={() => handleReprocessSnapshots({ ids: [rec.id], reprocessOcr: false })}
+                                disabled={processingIds.includes(rec.id)}
+                                className="pl-1.5 border-l border-surface-container-high text-text-secondary hover:text-primary transition-colors cursor-pointer"
+                                title="Reprocess snapshot (OCR-cached)"
+                              >
+                                <RefreshCw className={`w-3 h-3 ${processingIds.includes(rec.id) ? 'animate-spin text-primary' : ''}`} />
+                              </button>
                             </div>
                           )}
 
@@ -1077,15 +1281,32 @@ export default function App() {
 
                           {/* Tag Badges / Force Process Option */}
                           {rec.is_processed ? (
-                            rec.tags && rec.tags.length > 0 && (
-                              <div className="flex flex-wrap gap-1 pt-2 border-t border-surface-container">
-                                {rec.tags.map((tag) => (
-                                  <span key={tag} className="text-[10px] font-semibold bg-accent-surface text-primary px-1.5 py-0.5 rounded">
-                                    #{tag}
-                                  </span>
-                                ))}
-                              </div>
-                            )
+                            <div className="space-y-2 pt-2 border-t border-surface-container">
+                              {rec.tags && rec.tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {rec.tags.map((tag) => (
+                                    <span key={tag} className="text-[10px] font-semibold bg-accent-surface text-primary px-1.5 py-0.5 rounded">
+                                      #{tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Logs Terminal snippet during reprocessing */}
+                              {(processingIds.includes(rec.id) || (logs[rec.id] && logs[rec.id].length > 0)) && (
+                                <div className="bg-surface-container-low border border-surface-container-high text-text-secondary font-mono text-[10px] p-2 rounded max-h-[120px] overflow-y-auto space-y-0.5 mt-1 select-all">
+                                  <div className="text-[9px] font-semibold text-text-primary uppercase tracking-wider mb-1 flex items-center justify-between border-b border-surface-container pb-1 font-messina">
+                                    <span>Reprocessing Terminal</span>
+                                    {processingIds.includes(rec.id) && (
+                                      <span className="w-1.5 h-1.5 rounded-full bg-success-green animate-ping"></span>
+                                    )}
+                                  </div>
+                                  {logs[rec.id]?.map((line, idx) => (
+                                    <div key={idx} className="leading-normal break-all text-left">{line}</div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           ) : (
                             <div className="pt-2 border-t border-surface-container">
                               <button
@@ -1364,6 +1585,20 @@ export default function App() {
                         ))}
                       </div>
                     )}
+                    <div className="pt-2 border-t border-surface-container">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await handleReprocessSnapshots({ ids: [selectedRecord.id], reprocessOcr: false })
+                        }}
+                        disabled={processingIds.includes(selectedRecord.id)}
+                        className="w-full bg-neutral-dark hover:bg-neutral text-white text-action-sm font-semibold py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors disabled:opacity-50 select-none cursor-pointer"
+                        title="Reprocess this snapshot to refresh tags, project guesses, and descriptions"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${processingIds.includes(selectedRecord.id) ? 'animate-spin' : ''}`} />
+                        {processingIds.includes(selectedRecord.id) ? 'Reprocessing Snapshot...' : 'Reprocess Snapshot (OCR-cached)'}
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="pt-2 border-t border-surface-container">

@@ -14,5 +14,5 @@ fileignoreconfig:
 - filename: aw_vision/server.py
   checksum: 629606cde09ebbf0f781dfaa9ad944b641cd03e0e1a72a9b0a66681ce6ce026f
 - filename: frontend/src/App.tsx
-  checksum: d4014dfd49cb78e4397668c1b6bb5576e4d87a049c2a855e681fe05c5bca3cd6
+  checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
 version: ""

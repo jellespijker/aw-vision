@@ -155,6 +155,12 @@ class VisionDB:
         if "tags" in record and isinstance(record["tags"], str):
             record["tags"] = [tag.strip() for item in record["tags"].split(",") for tag in [item.strip()] if tag]
 
+        # Ensure idempotency by deleting any existing record with the same ID first
+        try:
+            self.table.delete(f"id = '{record['id']}'")
+        except Exception as e:
+            print(f"Warning: Could not delete existing record '{record['id']}' before insert: {e}")
+
         self.table.add([record])
 
     def search_semantic(self, query_vector: list, limit: int = 5, where: str = None) -> list:
