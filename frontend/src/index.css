@@ -1,72 +1,127 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans:wght@400;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-display: 'Outfit', system-ui, sans-serif;
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+  --font-messina: 'Messina Sans', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  --font-noto: 'Noto Sans', sans-serif;
+  
+  /* UltiMaker Professional System Color Tokens */
+  --color-surface: #fcf9f8;
+  --color-surface-dim: #f8f8f8;
+  --color-surface-bright: #fcf9f8;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f6f3f2;
+  --color-surface-container: #f0eded;
+  --color-surface-container-high: #eae7e7;
+  --color-surface-container-highest: #e4e2e1;
+  --color-on-surface: #1b1c1c;
+  --color-on-surface-variant: #454557;
+  --color-inverse-surface: #303030;
+  --color-inverse-on-surface: #f3f0ef;
+  --color-outline: #767589;
+  --color-outline-variant: #c6c4da;
+  --color-surface-tint: #363cff;
+  --color-primary: #0500af;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #100aed;
+  --color-on-primary-container: #acb0ff;
+  --color-inverse-primary: #bfc2ff;
+  --color-secondary: #006e27;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #5cfd7b;
+  --color-on-secondary-container: #007329;
+  --color-tertiary: #735c00;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #cea700;
+  --color-on-tertiary-container: #4e3d00;
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+  --color-background: #fcf9f8;
+  --color-on-background: #1b1c1c;
+  --color-surface-variant: #e4e2e1;
+  --color-danger-primary: #FF0021;
+  --color-danger-hover: #CC001A;
+  --color-danger-active: #990014;
+  --color-danger-surface: #FFE6E9;
+  --color-warning-light: #FFF8D9;
+  --color-text-secondary: #707070;
+  --color-disabled: #8D8D8D;
+  --color-accent-surface: #E7E7FD;
+  
+  /* High-Contrast Status Colors */
+  --color-success-green: #00C84E;
+  --color-attention-yellow: #FDD13A;
+  --color-neutral-dark: #282828;
 }
 
-@layer utilities {
-  .glass-card {
-    background: rgba(255, 255, 255, 0.45);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.25);
-  }
-  
-  .glass-card-dark {
-    background: rgba(15, 23, 42, 0.65);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-  }
-  
-  .glass-input {
-    background: rgba(255, 255, 255, 0.6);
-    border: 1px solid rgba(226, 232, 240, 0.8);
-    backdrop-filter: blur(8px);
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  
-  .glass-input:focus {
-    background: rgba(255, 255, 255, 0.9);
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
-  }
-
-  .glass-input-dark {
-    background: rgba(30, 41, 59, 0.4);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(8px);
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .glass-input-dark:focus {
-    background: rgba(30, 41, 59, 0.7);
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.3);
-  }
-  
-  .text-gradient {
-    background: linear-gradient(135deg, #2563eb 0%, #3b82f6 50%, #8b5cf6 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-  
-  .bg-gradient-premium {
-    background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 50%, #1d4ed8 100%);
-  }
-
-  .bg-gradient-dark {
-    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  }
-  
-  .shadow-premium {
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  }
+@utility text-display-progress {
+  font-family: 'Noto Sans', sans-serif;
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 40px;
 }
 
-/* Scrollbar customizations */
+@utility text-headline-sm {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+@utility text-action-lg {
+  font-family: 'Messina Sans', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+@utility text-action-md {
+  font-family: 'Messina Sans', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+@utility text-body-md {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+}
+
+@utility text-body-sm {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+}
+
+@utility text-technical-md {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+}
+
+@utility text-technical-sm {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+}
+
+@utility text-indicator-bold {
+  font-family: 'Messina Sans', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 14px;
+}
+
+/* Custom Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -75,11 +130,11 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3);
+  background: #eae7e7;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.5);
+  background: #eae7e7;
 }
 
 @keyframes pulse-slow {
@@ -91,8 +146,10 @@
 }
 
 body {
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   margin: 0;
   padding: 0;
   overflow-x: hidden;
+  background-color: #fcf9f8;
+  color: #1b1c1c;
 }
