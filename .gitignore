@@ -130,7 +130,8 @@ cygdb
 # ActivityWatch Local Captured/Temporary screenshots (if stored in-tree)
 *.png
 *.json
-!projects.json
+projects.json
+!projects.json.example
 
 # Development Helper Tracking Files (Agent Artifacts)
 task.md
