@@ -18,10 +18,12 @@ DEFAULT_CONFIG = {
     "processing": {
         "cpu_threshold_percent": 30.0,
         "memory_threshold_percent": 80.0,
+        "gpu_threshold_percent": 50.0,
         "check_interval_seconds": 10,
         "max_screenshot_lifetime_days": 14,
         "cleanup_interval_hours": 1,
     },
+
     "ollama": {
         "host": "http://localhost:11434",
         "vision_model": "gemma4:e4b-it-qat",
@@ -122,6 +124,10 @@ class Config:
     @property
     def memory_threshold(self) -> float:
         return float(self.settings["processing"]["memory_threshold_percent"])
+
+    @property
+    def gpu_threshold(self) -> float:
+        return float(self.settings["processing"].get("gpu_threshold_percent", 50.0))
 
     @property
     def check_interval(self) -> int:

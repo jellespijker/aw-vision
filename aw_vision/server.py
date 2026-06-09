@@ -203,48 +203,158 @@ def save_projects(projects: List[ProjectModel]):
 
 @app.get("/api/history")
 def get_history(limit: Optional[int] = 100, search: Optional[str] = None):
-    """Get a list of historical screenshot metadata from LanceDB."""
+    """Get a list of historical screenshot metadata, merging pending items from raw folder and processed ones from LanceDB."""
     try:
-        if search:
-            # Embed search text
-            import requests
+        import json
 
+        # 1. Fetch pending raw screenshots
+        pending_records = []
+        try:
+            queue = processor.get_pending_queue()
+            for img_path, meta_path in queue:
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    pending_records.append({
+                        "id": meta.get("id"),
+                        "timestamp": float(meta.get("timestamp", 0.0)),
+                        "image_filename": img_path.name,
+                        "window_title": meta.get("window_title", "Unknown"),
+                        "app_name": meta.get("app_name", "Unknown"),
+                        "is_afk": bool(meta.get("is_afk", False)),
+                        "description": "Pending processing...",
+                        "ocr_text": None,
+                        "tags": [],
+                        "project_number": None,
+                        "is_processed": False,
+                    })
+                except Exception as e:
+                    print(f"Error reading pending metadata {meta_path}: {e}")
+        except Exception as e:
+            print(f"Error reading pending queue: {e}")
+
+        # 2. Fetch processed screenshots
+        db_results = []
+        if search:
+            # Embed search text for semantic search
+            import requests
             url = f"{config.ollama_host}/api/embeddings"
             payload = {"model": config.embedding_model, "prompt": search}
             resp = requests.post(url, json=payload, timeout=5.0)
             if resp.status_code == 200:
                 query_vector = resp.json().get("embedding", [])
-                results = db.search_semantic(query_vector, limit=limit)
+                db_results = db.search_semantic(query_vector, limit=limit)
             else:
-                results = db.get_all_records(limit=limit)
+                db_results = db.get_all_records(limit=limit)
         else:
-            results = db.get_all_records(limit=limit)
+            db_results = db.get_all_records(limit=limit)
 
-        # Clean results for response
-        cleaned = []
-        for r in results:
+        cleaned_db = []
+        for r in db_results:
             image_path_val = r.get("image_path")
-            cleaned.append(
-                {
-                    "id": r.get("id"),
-                    "timestamp": r.get("timestamp"),
-                    "image_filename": (os.path.basename(image_path_val) if image_path_val else None),
-                    "window_title": r.get("window_title"),
-                    "app_name": r.get("app_name"),
-                    "is_afk": r.get("is_afk"),
-                    "description": r.get("description"),
-                    "ocr_text": r.get("ocr_text"),
-                    "tags": r.get("tags", []),
-                    "project_number": r.get("project_number"),
-                    "distance": r.get("_distance"),  # Only present on semantic searches
-                }
-            )
-        return cleaned
+            cleaned_db.append({
+                "id": r.get("id"),
+                "timestamp": r.get("timestamp"),
+                "image_filename": (os.path.basename(image_path_val) if image_path_val else None),
+                "window_title": r.get("window_title"),
+                "app_name": r.get("app_name"),
+                "is_afk": r.get("is_afk"),
+                "description": r.get("description"),
+                "ocr_text": r.get("ocr_text"),
+                "tags": r.get("tags", []),
+                "project_number": r.get("project_number"),
+                "is_processed": True,
+                "distance": r.get("_distance"),  # Only present on semantic searches
+            })
+
+        # 3. Filter pending if searching (simple case-insensitive substring match)
+        if search:
+            search_lower = search.lower()
+            filtered_pending = []
+            for p in pending_records:
+                if search_lower in p["window_title"].lower() or search_lower in p["app_name"].lower():
+                    # For search results, we can add a nominal distance so they sort nicely
+                    p["distance"] = 0.0
+                    filtered_pending.append(p)
+            pending_records = filtered_pending
+
+        # 4. Merge and sort globally by timestamp descending
+        merged = pending_records + cleaned_db
+        merged.sort(key=lambda x: x.get("timestamp", 0.0), reverse=True)
+        return merged[:limit]
+
     except Exception as e:
         import traceback
-
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to fetch history: {e}")
+
+
+@app.post("/api/process/{file_id}")
+def process_single_screenshot(file_id: str):
+    """Force-process a single pending screenshot synchronously."""
+    try:
+        import json
+        raw_dir = config.screenshots_dir / "raw"
+        meta_file = None
+        for p in raw_dir.glob("*.json"):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                if meta.get("id") == file_id:
+                    meta_file = p
+                    break
+            except Exception:
+                continue
+
+        if not meta_file:
+            raise HTTPException(status_code=404, detail="Pending screenshot not found.")
+
+        img_file = meta_file.with_suffix(".png")
+        if not img_file.exists():
+            raise HTTPException(status_code=404, detail="Screenshot image file not found.")
+
+        projects = config.load_projects()
+        success = processor.process_screenshot(img_file, meta_file, projects)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to process screenshot.")
+
+        record = db.get_record_by_id(file_id)
+        if not record:
+            raise HTTPException(status_code=500, detail="Processed successfully but database record not found.")
+
+        image_path_val = record.get("image_path")
+        return {
+            "id": record.get("id"),
+            "timestamp": record.get("timestamp"),
+            "image_filename": (os.path.basename(image_path_val) if image_path_val else None),
+            "window_title": record.get("window_title"),
+            "app_name": record.get("app_name"),
+            "is_afk": record.get("is_afk"),
+            "description": record.get("description"),
+            "ocr_text": record.get("ocr_text"),
+            "tags": record.get("tags", []),
+            "project_number": record.get("project_number"),
+            "is_processed": True,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error force processing: {e}")
+
+
+@app.post("/api/process-all")
+def process_all_screenshots():
+    """Force-process all pending screenshots asynchronously in a background thread."""
+    try:
+        processor.force_process_all()
+        return {
+            "status": "success",
+            "message": "Bulk force processing started in background.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to trigger bulk processing: {e}")
 
 
 # Serve compiled static React files in production/standalone mode

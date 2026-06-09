@@ -21,17 +21,99 @@ class BulkProcessor:
         self.processed_dir = config.screenshots_dir / "processed"
         self.running = False
         self.thread = None
+        self.lock = threading.Lock()
+        self.processing_ids = set()
 
         # Ensure directories exist
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.processed_dir.mkdir(parents=True, exist_ok=True)
 
+    def get_nvidia_gpus_usage(self) -> list[dict]:
+        """Query nvidia-smi to get GPU utilization and process list."""
+        import shutil
+        import subprocess
+
+        if not shutil.which("nvidia-smi"):
+            return []
+
+        try:
+            # Query GPU index and utilization
+            res = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index,utilization.gpu", "--format=csv,noheader,nounits"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=1.5
+            )
+            if res.returncode != 0:
+                return []
+
+            gpus = []
+            for line in res.stdout.strip().split("\n"):
+                if line:
+                    parts = line.split(",")
+                    if len(parts) == 2:
+                        idx = int(parts[0].strip())
+                        util = float(parts[1].strip())
+                        gpus.append({"index": idx, "utilization": util, "ollama_running": False})
+
+            # Check if any ollama processes are running on the GPU
+            res_proc = subprocess.run(
+                ["nvidia-smi", "--query-compute-apps=gpu_index,pid,process_name", "--format=csv,noheader"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=1.5
+            )
+            if res_proc.returncode == 0:
+                for line in res_proc.stdout.strip().split("\n"):
+                    if line:
+                        parts = line.split(",")
+                        if len(parts) >= 3:
+                            gpu_idx_str = parts[0].strip()
+                            proc_name = parts[2].strip().lower()
+                            if "ollama" in proc_name or "llama-server" in proc_name or "llama" in proc_name:
+                                try:
+                                    gpu_idx = int(gpu_idx_str)
+                                    for gpu in gpus:
+                                        if gpu["index"] == gpu_idx:
+                                            gpu["ollama_running"] = True
+                                except ValueError:
+                                    pass
+
+            return gpus
+        except Exception as e:
+            print(f"Error querying nvidia-smi for GPU utilization: {e}")
+            return []
+
     def is_system_idle(self) -> bool:
-        """Check if CPU and Memory usage are below the idle thresholds."""
+        """Check if CPU, Memory, and optionally GPU usage are below idle thresholds."""
         cpu_usage = psutil.cpu_percent(interval=0.5)
         mem_usage = psutil.virtual_memory().percent
-        print(f"[{datetime.now()}] System resource check: CPU: {cpu_usage}%, Memory: {mem_usage}%")
-        return cpu_usage < config.cpu_threshold and mem_usage < config.memory_threshold
+
+        idle = cpu_usage < config.cpu_threshold and mem_usage < config.memory_threshold
+        status_msg = f"[{datetime.now()}] System resources check - CPU: {cpu_usage}% (limit {config.cpu_threshold}%), Memory: {mem_usage}% (limit {config.memory_threshold}%)"
+
+        # Check GPU usage if nvidia-smi is available
+        gpus = self.get_nvidia_gpus_usage()
+        gpu_active_limit_exceeded = False
+
+        for gpu in gpus:
+            idx = gpu["index"]
+            util = gpu["utilization"]
+            ollama_active = gpu["ollama_running"]
+            status_msg += f", GPU[{idx}]: {util}%"
+            if ollama_active:
+                status_msg += " (Ollama running on GPU)"
+                if util > config.gpu_threshold:
+                    gpu_active_limit_exceeded = True
+                    status_msg += f" [BUSY: >{config.gpu_threshold}%]"
+
+        print(status_msg)
+        if gpu_active_limit_exceeded:
+            return False
+
+        return idle
 
     def get_pending_queue(self) -> list[tuple[Path, Path]]:
         """Return lists of pending (screenshot_path, metadata_path) tuples."""
@@ -144,13 +226,25 @@ class BulkProcessor:
 
     def process_screenshot(self, img_path: Path, meta_path: Path, projects: list) -> bool:
         """Process a single screenshot using Ollama vision model and commit to database."""
-        try:
-            print(f"[{datetime.now()}] Processing pending screenshot: {img_path.name}")
+        if not meta_path.exists() or not img_path.exists():
+            return False
 
-            # Load metadata context
+        try:
             with open(meta_path, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
+            rec_id = metadata["id"]
+        except Exception as e:
+            print(f"Error reading metadata file {meta_path}: {e}")
+            return False
 
+        with self.lock:
+            if rec_id in self.processing_ids:
+                print(f"Screenshot {rec_id} is already being processed. Skipping.")
+                return False
+            self.processing_ids.add(rec_id)
+
+        try:
+            print(f"[{datetime.now()}] Processing pending screenshot: {img_path.name}")
             app_name = metadata.get("app_name", "Unknown")
             window_title = metadata.get("window_title", "Unknown")
 
@@ -258,6 +352,28 @@ JSON Schema:
             print(f"Error processing screenshot {img_path.name}: {e}")
             traceback.print_exc()
             return False
+        finally:
+            with self.lock:
+                self.processing_ids.discard(rec_id)
+
+    def force_process_all(self):
+        """Force process all pending items immediately in a background thread."""
+        def run_force():
+            print(f"[{datetime.now()}] Force processing all starting...")
+            try:
+                queue = self.get_pending_queue()
+                if not queue:
+                    print(f"[{datetime.now()}] Force processing all: no pending items.")
+                    return
+                projects = config.load_projects()
+                for img_path, meta_path in queue:
+                    self.process_screenshot(img_path, meta_path, projects)
+            except Exception as e:
+                print(f"Error in force_process_all thread: {e}")
+            finally:
+                print(f"[{datetime.now()}] Force processing all finished.")
+
+        threading.Thread(target=run_force, daemon=True).start()
 
     def _loop(self):
         print(f"Processor daemon started. Running check every {config.check_interval}s.")
