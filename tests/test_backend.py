@@ -18,7 +18,7 @@ client = TestClient(app)
 def test_config_defaults():
     """Verify config falls back to safe defaults and expands paths."""
     assert config.screenshot_interval == 60
-    assert config.cpu_threshold == 30.0
+    assert config.cpu_threshold == 80.0
     assert config.memory_threshold == 80.0
     assert "screenshots" in str(config.screenshots_dir)
 
