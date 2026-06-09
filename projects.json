@@ -1,0 +1,92 @@
+[
+  {
+    "project_number": "DEV - NGP Research - To M0",
+    "description": "Research and conceptual design of the Next Generation Platform (NGP) printer architecture up to the M0 milestone.",
+    "work_entailment": "Designing system architecture, validating mechanical concepts, and performing initial prototype testing.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "DEV - NGP Research - To M5",
+    "description": "System integration and functional validation of the Next Generation Platform (NGP) heading towards the M5 milestone.",
+    "work_entailment": "Performing firmware and cloud integrations, system-level debugging, functional validation, and controlcenter connectivity testing.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "DEV - ISO 27001",
+    "description": "Establishment and preparation of the Information Security Management System (ISMS) in compliance with the ISO 27001 standard.",
+    "work_entailment": "Implementing security controls, drafting policies, conducting risk assessments, and preparing for security audits.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "GENERAL - Management activities",
+    "description": "General management duties, team coordination, and high-level operational steering.",
+    "work_entailment": "Leading team syncs, capacity planning, managing cross-department communication, and stakeholder alignment.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "DEV - Embedded platform maintenance",
+    "description": "Ongoing sustenance, maintenance, and technical updates for the embedded software platform of 3D printers.",
+    "work_entailment": "Bug fixing in firmware, operating system updates, library maintenance, and ensuring backward hardware compatibility.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "DEV - PM General",
+    "description": "General project management and sprint coordination within the R&D developments.",
+    "work_entailment": "Tracking timelines, running agile standups, managing Jira backlogs, and preparing sprint planning reports.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "DEV - Avalanch (Belt-printer)",
+    "description": "Design, mechanical calibration, and continuous printing optimization of the Avalanch belt-printer platform.",
+    "work_entailment": "Engineering mechanical modifications, optimizing belt tension and calibration, and adapting firmware for continuous-printing queues.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "DEV - P&D General",
+    "description": "General research and prototyping tasks within the Product & Design (P&D) division.",
+    "work_entailment": "Prototyping new mechanisms, concept development, material testing, and ad-hoc R&D engineering support.",
+    "tracked_hours": 69
+  },
+  {
+    "project_number": "DEV - Factor 4+",
+    "description": "Development, firmware tuning, and validation for the Factor 4+ printer platform and upgrade kits.",
+    "work_entailment": "Integrating subsystem firmware, calibrating high-speed extrusion profiles, and validating performance reliability.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "GENERAL - Leave",
+    "description": "Tracking of leave, sick time, national holidays, and personal time off.",
+    "work_entailment": "Non-productive hours due to approved holidays, illness, or personal leave.",
+    "tracked_hours": 266
+  },
+  {
+    "project_number": "DEV - DF proposition improvements",
+    "description": "Functional enhancements to the Digital Factory (DF) ecosystem and cloud-based slicing software features.",
+    "work_entailment": "Implementing cloud slicing improvements, optimizing print-job workflows, and enhancing the overall Digital Factory subscription value proposition.",
+    "tracked_hours": 1307
+  },
+  {
+    "project_number": "BIZDEV - Capital Intensive business development",
+    "description": "Business development and strategic pipeline management for high-value capital-intensive hardware and system solutions.",
+    "work_entailment": "Conducting market analyses, building financial business cases, and tailoring commercial propositions for enterprise customers.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "BIZDEV - Education K-12 business development",
+    "description": "Business development, community partnerships, and K-12 educational program sales propositions.",
+    "work_entailment": "Drafting educational product bundles, aligning school-curriculum needs with print solutions, and presenting at K-12 events.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "DEV - S/Factor series Maintenance & Sustenance",
+    "description": "Technical sustenance, customer issue troubleshooting, and hardware quality improvements for the S-series and Factor-series printers.",
+    "work_entailment": "Diagnosing field issues, issuing engineering change orders (ECOs), and verifying production-line quality enhancements.",
+    "tracked_hours": 0
+  },
+  {
+    "project_number": "DEV - Sketch Series maintenance",
+    "description": "Firmware maintenance, bug tracking, and calibration support for the Sketch-series desktop 3D printers.",
+    "work_entailment": "Debugging print defects, implementing firmware patch releases, and sustaining classroom-printer hardware components.",
+    "tracked_hours": 3
+  }
+]
