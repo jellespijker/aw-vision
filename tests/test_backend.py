@@ -169,21 +169,21 @@ def test_snapshot_reprocessing(tmp_path):
 
 
 def test_summarize_ocr_text():
-    """Verify that summarize_ocr_text correctly cleans and truncates OCR outputs."""
+    """Verify that summarize_ocr_text correctly cleans and truncates OCR outputs in Caveman style."""
     from aw_vision.processor import processor
 
     # Case 1: Empty text
     assert processor.summarize_ocr_text("") == ""
     assert processor.summarize_ocr_text(None) == ""
 
-    # Case 2: Clean and filter consecutive redundant lines
-    dirty_text = "Line 1\n\n  \nLine 1\nLine 2\nLine 1\n"
-    # Expected: "Line 1\nLine 2" (because duplicates are filtered globally in seen set)
+    # Case 2: Clean, remove filler words, and filter consecutive redundant lines
+    dirty_text = "The Line 1\n\n  \nThe Line 1\nLine 2 and an or\nLine 1\n"
+    # Expected: "Line 1 | Line 2" (because "The", "and", "an", "or" are filler words)
     cleaned = processor.summarize_ocr_text(dirty_text)
     assert "Line 1" in cleaned
     assert "Line 2" in cleaned
-    # Check that there are no empty lines or whitespace issues
-    lines = [line_str for line_str in cleaned.split("\n") if "truncated" not in line_str]
+    # Check that there are no empty elements or whitespace issues
+    lines = [line_str.strip() for line_str in cleaned.split("|") if "truncated" not in line_str]
     assert len(lines) == 2
     assert lines[0] == "Line 1"
     assert lines[1] == "Line 2"
@@ -193,7 +193,7 @@ def test_summarize_ocr_text():
     max_chars = 200
     truncated = processor.summarize_ocr_text(long_text, max_chars=max_chars)
     assert len(truncated) > 0
-    assert "... [OCR Text truncated" in truncated
+    assert " ... [OCR Text truncated" in truncated
     # Check that it ends before max_chars + truncation message
-    content_part = truncated.split("\n... [OCR Text truncated")[0]
+    content_part = truncated.split(" ... [OCR Text truncated")[0]
     assert len(content_part) <= max_chars

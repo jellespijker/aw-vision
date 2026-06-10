@@ -15,6 +15,37 @@ from aw_vision.config import config
 from aw_vision.db import db
 
 
+def caveman_compress_text(text: str) -> str:
+    """Algorithmically compress text in a caveman style by stripping filler words and duplicate lines."""
+    if not text or text == "N/A":
+        return text
+
+    # Split into lines, normalize whitespace, and filter empty lines
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    # Filter common stop words to make each line dense and terse
+    filler_words = {
+        "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been", "being",
+        "to", "of", "in", "on", "at", "by", "for", "with", "about", "against", "between", "into",
+        "through", "during", "before", "after", "above", "below", "from", "up", "down", "in", "out",
+        "off", "over", "under", "again", "further", "then", "once"
+    }
+
+    compressed_lines = []
+    seen = set()
+    for line in lines:
+        words = line.split()
+        compressed_words = [w for w in words if w.lower() not in filler_words]
+        if compressed_words:
+            compressed_line = " ".join(compressed_words)
+            norm = compressed_line.lower()
+            if norm not in seen:
+                seen.add(norm)
+                compressed_lines.append(compressed_line)
+
+    return " | ".join(compressed_lines)
+
+
 class BulkProcessor:
     def __init__(self):
         self.raw_dir = config.screenshots_dir / "raw"
@@ -193,33 +224,21 @@ class BulkProcessor:
             return ""
 
     def summarize_ocr_text(self, ocr_text: str, max_chars: int = 1200) -> str:
-        """Pre-process and truncate OCR text to fit within vision model context window constraints."""
+        """Pre-process, compress using Caveman style, and truncate OCR text to fit within constraints."""
         if not ocr_text:
             return ""
 
-        # Filter empty lines and strip whitespace
-        lines = [line.strip() for line in ocr_text.split("\n") if line.strip()]
-
-        # Remove duplicate consecutive or highly repetitive lines to clean up OCR noise
-        unique_lines = []
-        seen = set()
-        for line_str in lines:
-            norm = line_str.lower()
-            if norm not in seen:
-                seen.add(norm)
-                unique_lines.append(line_str)
-
-        cleaned_text = "\n".join(unique_lines)
-        if len(cleaned_text) <= max_chars:
-            return cleaned_text
+        compressed = caveman_compress_text(ocr_text)
+        if len(compressed) <= max_chars:
+            return compressed
 
         # Truncate and append truncation message
-        truncated = cleaned_text[:max_chars]
-        last_nl = truncated.rfind("\n")
-        if last_nl > max_chars // 2:
-            truncated = truncated[:last_nl]
+        truncated = compressed[:max_chars]
+        last_pipe = truncated.rfind(" | ")
+        if last_pipe > max_chars // 2:
+            truncated = truncated[:last_pipe]
 
-        return truncated + f"\n... [OCR Text truncated from {len(ocr_text)} to {len(truncated)} chars for LLM context window safety]"
+        return truncated + f" ... [OCR Text truncated from {len(compressed)} to {len(truncated)} chars]"
 
     def optimize_image(self, img_path: Path, rec_id: str, max_size: int = 1200):
         """Resize image to a maximum dimension of max_size maintaining aspect ratio, saving disk space and speeding up vision/OCR models."""
@@ -245,12 +264,12 @@ class BulkProcessor:
         import socket
         try:
             hostname = socket.gethostname()
-            bucket_id = f"aw-vision-processed_{hostname}"
+            bucket_id = f"aw-watcher-vision_{hostname}"
 
             # Ensure bucket exists (aw-server handles 304 or 200)
             url_create = f"http://localhost:5600/api/0/buckets/{bucket_id}"
             create_payload = {
-                "client": "aw-vision",
+                "client": "aw-watcher-vision",
                 "type": "vision-processed",
                 "hostname": hostname
             }
@@ -673,7 +692,9 @@ You must respond in valid JSON format matching this schema:
                     try:
                         self.log_step(rec_id, "Stage 5/6: Synthesizing final work description...")
                         prompt_s5 = f"""
-Synthesize all of the following intermediate details:
+Synthesize all of the following intermediate details into an ultra-dense, highly precise "Caveman-style" work description (omitting pronouns, articles, and auxiliary filler verbs like 'the', 'is', 'a', 'was', 'were', 'to', 'for'). Use symbols, shorthand, and dense technical fragments separated by punctuation.
+
+Intermediate Details:
 - Active Window Description: {active_window_description}
 - Full Desktop Description: {full_desktop_description}
 - Extracted Screen Text (OCR): {truncated_ocr}
@@ -681,7 +702,12 @@ Synthesize all of the following intermediate details:
 - Assigned Project: {project_number}
 - Technical Tags: {tags}
 
-Write a highly precise, cohesive 1-3 sentence description summarizing what active work the user was doing. Avoid passive, generic phrasing like "the user is looking at a computer screen" or "working on a project". Instead, write a detailed, active summary (e.g., "Developing the frontend UI for aw-vision, refactoring the list component to display unique elements with exact CSS tokens").
+Syntactic Rules:
+1. Speak like a highly technical "caveman": use short sentences, omit non-essential filler words, and favor fragments/phrases.
+2. Ensure every single word carries maximum technical information. Minimize fluff.
+3. Separate distinct actions or observations with semicolons or periods.
+4. Example of standard description: "Developing the frontend UI for aw-vision, refactoring the list component to display unique elements with exact CSS tokens."
+5. Example of Caveman-style equivalent (DO THIS STYLE): "Dev aw-vision UI. Refactored list component; displaying unique elements via exact CSS tokens."
 
 You must respond in valid JSON format matching this schema:
 {{
@@ -763,7 +789,7 @@ You must respond in valid JSON format matching this schema:
                 self.log_step(rec_id, f"Phase 3/3: Embedding calculation, DB commit & Cleanup (item {idx + 1}/{N} in batch)")
 
                 description = meta.get("description", "No description generated.")
-                ocr_text = meta.get("ocr_text", "")
+                ocr_text = self.summarize_ocr_text(meta.get("ocr_text", ""), max_chars=1200)
                 tags = meta.get("tags", [])
                 project_number = meta.get("project_number", "None")
                 if project_number == "None":

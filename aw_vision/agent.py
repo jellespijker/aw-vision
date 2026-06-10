@@ -12,6 +12,136 @@ from langgraph.graph import END, StateGraph
 from aw_vision.config import config
 from aw_vision.db import db
 
+
+def caveman_compress_text(text: str) -> str:
+    """Algorithmically compress text in a caveman style by stripping filler words and duplicate lines."""
+    if not text or text == "N/A":
+        return text
+
+    # Split into lines, normalize whitespace, and filter empty lines
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    # Filter common stop words to make each line dense and terse
+    filler_words = {
+        "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been", "being",
+        "to", "of", "in", "on", "at", "by", "for", "with", "about", "against", "between", "into",
+        "through", "during", "before", "after", "above", "below", "from", "up", "down", "in", "out",
+        "off", "over", "under", "again", "further", "then", "once"
+    }
+
+    compressed_lines = []
+    seen = set()
+    for line in lines:
+        words = line.split()
+        compressed_words = [w for w in words if w.lower() not in filler_words]
+        if compressed_words:
+            compressed_line = " ".join(compressed_words)
+            norm = compressed_line.lower()
+            if norm not in seen:
+                seen.add(norm)
+                compressed_lines.append(compressed_line)
+
+    return " | ".join(compressed_lines)
+
+
+def programmatic_compress_records(raw_result: str, max_full_records: int = 5) -> str:
+    """Programmatically compress a list of formatted records to fit within limits.
+
+    Keeps the first N records in full. For any subsequent records, keeps only the header
+    line (containing timestamp, App, and Window) to provide a compact high-level timeline.
+    """
+    lines = raw_result.splitlines()
+    compressed_lines = []
+    record_count = 0
+    in_sub_fields = False
+    has_records = False
+
+    for line in lines:
+        stripped = line.strip()
+        # Detect records
+        is_header = (
+            stripped.startswith("- [")
+            or stripped.startswith("--- Result")
+            or stripped.startswith("--- Record")
+        )
+        if is_header:
+            has_records = True
+            record_count += 1
+            in_sub_fields = record_count > max_full_records
+            compressed_lines.append(line)
+        elif in_sub_fields:
+            # Skip Desc, OCR, Tags lines for records beyond max_full_records
+            continue
+        else:
+            compressed_lines.append(line)
+
+    if not has_records:
+        # If it's some other tool output (like GitHub/Jira/project config), just truncate to safe size
+        return raw_result[:3000] + "\n\n... [Truncated programmatically to 3000 chars]"
+
+    return "\n".join(compressed_lines)
+
+
+def summarize_tool_result(tool_name: str, raw_result: str) -> str:
+    """Summarize a large tool result into a dense technical overview."""
+    if tool_name == "get_recent_screenshots":
+        prompt = f"""
+You are a highly efficient assistant. Your task is to compress the following list of desktop records into a highly dense chronological timeline of the user's activities.
+Keep only unique, key transitions of active applications, window titles, and specific actions.
+Omit repetitive consecutive records of the same window unless the description or OCR text changes significantly.
+Ensure the output reads as a clear, dense log of what was worked on, so the main agent can directly see the precise timeline of activities.
+Format each unique activity strictly as:
+- [Time] AppName | WindowTitle: Description summary (OCR keywords)
+
+Raw Desktop Records:
+{raw_result[:20000]}
+"""
+    elif tool_name == "search_screenshots_semantic":
+        prompt = f"""
+You are a highly efficient assistant. Your task is to compress the following semantic search results into a highly dense summary of matching events.
+Highlight the most relevant matches, their apps/window titles, descriptions, and any relevant discussion or text found.
+Ensure the main agent gets all the specific, fine-grained details needed to answer the user's query.
+
+Raw Search Results:
+{raw_result[:20000]}
+"""
+    else:
+        prompt = f"""
+You are a highly efficient text-summarization sub-agent.
+Your task is to summarize the following raw tool output from '{tool_name}' into an ultra-dense, structured technical overview.
+Identify key findings, activities, files, applications, or discussion points.
+Format your response using compact bullet points or semicolons. Omit all polite or introductory filler text.
+
+Raw Tool Output:
+{raw_result[:20000]}
+"""
+
+    try:
+        url = f"{config.ollama_host}/api/generate"
+        payload = {
+            "model": config.vision_model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.1, "num_ctx": 8192},
+            "keep_alive": 0,
+        }
+        resp = requests.post(url, json=payload, timeout=25.0)
+        if resp.status_code == 200:
+            summary = resp.json().get("response", "").strip()
+            if len(summary) >= 50:
+                return f"[Compressed representation of {tool_name} results]\n{summary}"
+            else:
+                print(f"Ollama returned empty or too-short response ({len(summary)} chars). Falling back to programmatic compression.")
+        else:
+            print(f"Ollama returned status {resp.status_code}. Falling back to programmatic compression.")
+    except Exception as e:
+        print(f"Error/timeout in tool result summarizer: {e}. Falling back to programmatic compression.")
+
+    # Programmatic compression fallback
+    compressed = programmatic_compress_records(raw_result, max_full_records=4)
+    return f"[Programmatically compressed to fit context limit]\n{compressed}"
+
+
 # ---------------------------------------------------------
 # Tool Definitions
 # ---------------------------------------------------------
@@ -23,7 +153,7 @@ def tool_search_screenshots_semantic(query: str, limit: int = 5) -> str:
         # Step 1: Embed query via Ollama
         url = f"{config.ollama_host}/api/embeddings"
         payload = {"model": config.embedding_model, "prompt": query, "keep_alive": 0}
-        resp = requests.post(url, json=payload, timeout=30.0)
+        resp = requests.post(url, json=payload, timeout=60.0)
         if resp.status_code != 200:
             return f"Error embedding query: {resp.text}"
 
@@ -41,20 +171,17 @@ def tool_search_screenshots_semantic(query: str, limit: int = 5) -> str:
         for r in results:
             dt = datetime.fromtimestamp(r.get("timestamp", 0)).strftime("%Y-%m-%d %H:%M:%S")
             tags_str = ", ".join(r.get("tags", []))
-            image_path_val = r.get("image_path")
-            screenshot_name = (
-                os.path.basename(image_path_val) if image_path_val else "Archived (Image deleted, metadata preserved)"
-            )
+            ocr_text = r.get("ocr_text", "N/A") or "N/A"
+            ocr_text = caveman_compress_text(ocr_text)
+            if len(ocr_text) > 350:
+                ocr_text = ocr_text[:350].strip() + "..."
 
+            dist_val = f"{r.get('_distance'):.4f}" if '_distance' in r and isinstance(r.get('_distance'), (int, float)) else r.get('_distance', 'N/A')
             output.append(
-                f"--- Result (Similarity: {r.get('_distance', 'N/A')}) ---\n"
-                f"Time: {dt}\n"
-                f"App: {r.get('app_name')} | Window: {r.get('window_title')}\n"
-                f"Description: {r.get('description')}\n"
-                f"Extracted OCR Text: {r.get('ocr_text', 'N/A')}\n"
-                f"Tags: {tags_str}\n"
-                f"Project Mapped: {r.get('project_number')}\n"
-                f"Screenshot: {screenshot_name}\n"
+                f"- [{dt}] (Similarity: {dist_val}) App: {r.get('app_name')} | Window: {r.get('window_title')}\n"
+                f"  Desc: {r.get('description')}\n"
+                f"  OCR: {ocr_text}\n"
+                f"  Tags: {tags_str} | Proj: {r.get('project_number')}"
             )
         return "\n".join(output)
     except Exception as e:
@@ -140,7 +267,7 @@ def tool_get_similar_labeled_snapshots(query: str, limit: int = 5) -> str:
         # Step 1: Embed query via Ollama
         url = f"{config.ollama_host}/api/embeddings"
         payload = {"model": config.embedding_model, "prompt": query, "keep_alive": 0}
-        resp = requests.post(url, json=payload, timeout=30.0)
+        resp = requests.post(url, json=payload, timeout=60.0)
         if resp.status_code != 200:
             return f"Error embedding query: {resp.text}"
 
@@ -158,25 +285,55 @@ def tool_get_similar_labeled_snapshots(query: str, limit: int = 5) -> str:
         # Step 3: Format results
         output = []
         for r in results:
-            is_human = "Yes (Verified)" if r.get("human_labeled") else "No (Auto)"
+            is_human = "Human Verified" if r.get("human_labeled") else "Auto Labeled"
             tags_str = ", ".join(r.get("tags", []))
             output.append(
-                f"--- Similar Labeled Result (Score: {r.get('score', 0.0):.2f}) ---\n"
-                f"Project Assigned: {r.get('project_number')}\n"
-                f"Human Verified Label: {is_human}\n"
-                f"App: {r.get('app_name')} | Window: {r.get('window_title')}\n"
-                f"Description: {r.get('description')}\n"
-                f"Tags: {tags_str}\n"
+                f"- [Score: {r.get('score', 0.0):.2f}] Proj: {r.get('project_number')} ({is_human})\n"
+                f"  App: {r.get('app_name')} | Window: {r.get('window_title')}\n"
+                f"  Desc: {r.get('description')}\n"
+                f"  Tags: {tags_str}"
             )
         return "\n".join(output)
     except Exception as e:
         return f"Error searching similar labeled snapshots: {e}"
 
 
+def tool_get_recent_screenshots(limit: Union[int, str] = 10) -> str:
+    """Retrieve the most recent desktop screenshots, metadata, and extracted OCR text from the database."""
+    try:
+        try:
+            limit = int(limit)
+        except (ValueError, TypeError):
+            limit = 10
+        results = db.get_all_records(limit=limit)
+        if not results:
+            return "No recent screenshots or active screens found in database."
+
+        output = []
+        for r in results:
+            dt = datetime.fromtimestamp(r.get("timestamp", 0)).strftime("%Y-%m-%d %H:%M:%S")
+            tags_str = ", ".join(r.get("tags", []))
+            ocr_text = r.get("ocr_text", "N/A") or "N/A"
+            ocr_text = caveman_compress_text(ocr_text)
+            if len(ocr_text) > 150:
+                ocr_text = ocr_text[:150].strip() + "..."
+
+            output.append(
+                f"- [{dt}] App: {r.get('app_name')} | Window: {r.get('window_title')}\n"
+                f"  Desc: {r.get('description')}\n"
+                f"  OCR: {ocr_text}\n"
+                f"  Tags: {tags_str} | Proj: {r.get('project_number')}"
+            )
+        return "\n".join(output)
+    except Exception as e:
+        return f"Error retrieving recent screenshots: {e}"
+
+
 # Export a tool mapping
 TOOLS = {
     "search_screenshots_semantic": tool_search_screenshots_semantic,
     "get_similar_labeled_snapshots": tool_get_similar_labeled_snapshots,
+    "get_recent_screenshots": tool_get_recent_screenshots,
     "get_active_projects": tool_get_active_projects,
     "aggregate_project_hours": tool_aggregate_project_hours,
     "query_github": tool_query_github,
@@ -197,15 +354,19 @@ def run_agent_node(state: AgentState) -> AgentState:
     """Call Ollama and let the agent think or call a tool."""
     messages = state["messages"]
 
+    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     # Render messages into a text prompt for Ollama
     prompt_lines = [
         "You are an advanced agentic productivity assistant integrated with ActivityWatch.",
+        f"The current local date and time is: {current_time_str}.",
         "You have access to the user's desktop history via screenshot descriptions, tags, active window titles,",
         "as well as local work hours and external integrations (GitHub, Jira).",
         "Use the tools provided to answer the user's questions.",
         "Your available tools are:",
         "- search_screenshots_semantic(query): Search vector db of screenshots using semantic search.",
         "- get_similar_labeled_snapshots(query): Search vector db for similar labeled snapshots, giving 5x weight to human-verified project labels and matching tags/applications.",
+        "- get_recent_screenshots(limit): Retrieve the most recent desktop screenshots, ordered by timestamp descending.",
         "- get_active_projects(): List configured projects, descriptions, and work guidelines.",
         "- aggregate_project_hours(): Return total active hours spent on each project number.",
         "- query_github(query): Find commits, PRs, or issues on user's GitHub repositories.",
@@ -213,11 +374,15 @@ def run_agent_node(state: AgentState) -> AgentState:
         "",
         "CRITICAL: Always perform 'search_screenshots_semantic' first if the user is asking about past active sessions,",
         "such as browsing website pages, looking for sneakers, reading files, or coding topics.",
+        "CRITICAL: Always perform 'search_screenshots_semantic' first if the user asks about a specific person (e.g., 'Who is Sergii?', 'What did I discuss with Arjen?'),",
+        "specific projects, files, websites, or chat conversations. Do not assume you know them from your pre-trained weights; always search your local computer memory first.",
+        "CRITICAL: Always use 'get_recent_screenshots' if the user asks what they worked on recently (e.g., in the past hour, today, this morning, or wants a timeline of recent activity).",
         "CRITICAL: If the user is asking to categorize a task/application under a project, or wants to check how similar activities were labeled, call 'get_similar_labeled_snapshots' to leverage historical human-verified and tag-matched project associations.",
         "",
         "To invoke a tool, output a single line matching this format exactly:",
         "CALL_TOOL: tool_name, argument_string",
         "Example: CALL_TOOL: search_screenshots_semantic, purple sneakers",
+        "Example: CALL_TOOL: get_recent_screenshots, 15",
         "Example: CALL_TOOL: aggregate_project_hours, None",
         "",
         "If you have enough information to answer, output your final answer directly to the user (do not use CALL_TOOL).",
@@ -241,10 +406,10 @@ def run_agent_node(state: AgentState) -> AgentState:
             "model": config.vision_model,  # Re-use vision_model or any default text model
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0.1},
+            "options": {"temperature": 0.1, "num_ctx": 8192},
             "keep_alive": 0,
         }
-        resp = requests.post(url, json=payload, timeout=60.0)
+        resp = requests.post(url, json=payload, timeout=180.0)
         if resp.status_code == 200:
             reply = resp.json().get("response", "").strip()
         else:
@@ -293,6 +458,14 @@ def run_tools_node(state: AgentState) -> AgentState:
             result = f"Error executing tool: {e}"
     else:
         result = f"Tool '{tool_name}' is not registered."
+
+    if len(result) > 3000:
+        print(f"Tool output length ({len(result)}) exceeds threshold. Summarizing...")
+        summary = summarize_tool_result(tool_name, result)
+        if summary == result:  # Fallback happened due to timeout or error
+            result = result[:3500] + "\n\n... [Truncated due to local hardware summarizer timeout/error]"
+        else:
+            result = summary
 
     formatted_result = f"=== TOOL RESULT ({tool_name}) ===\n{result}"
     return {
