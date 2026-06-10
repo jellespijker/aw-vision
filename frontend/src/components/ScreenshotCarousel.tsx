@@ -229,9 +229,9 @@ export const ScreenshotCarousel: React.FC<ScreenshotCarouselProps> = ({
 
         {/* Heading window title and vision description */}
         <div className="space-y-2">
-          <h4 className="font-semibold text-headline-sm text-neutral-dark leading-tight" title={activeRecord.window_title}>
+          <h2 className="font-semibold text-headline-sm text-neutral-dark leading-tight" title={activeRecord.window_title}>
             {activeRecord.window_title}
-          </h4>
+          </h2>
           <p className="text-text-secondary text-body-sm leading-relaxed">{activeRecord.description}</p>
         </div>
 

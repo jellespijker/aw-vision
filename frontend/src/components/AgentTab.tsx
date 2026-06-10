@@ -252,9 +252,9 @@ export const AgentTab: React.FC<AgentTabProps> = ({
               <span className="w-1.5 h-1.5 rounded-full bg-success-green animate-pulse" />
               <span className="text-[11px] font-medium text-text-secondary">AG-UI Active</span>
             </div>
-            <h1 className="text-2xl md:text-3xl font-bold text-neutral-dark tracking-tight">
+            <h2 className="text-2xl md:text-3xl font-bold text-neutral-dark tracking-tight">
               Ask Memory Agent
-            </h1>
+            </h2>
             <p className="text-text-secondary text-body-md mt-1.5 max-w-2xl leading-relaxed">
               Query your past screen activities using natural language. The local agent resolves database search logs, tracks project metrics, and maps coordinates automatically.
             </p>

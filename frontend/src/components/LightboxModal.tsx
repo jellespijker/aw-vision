@@ -153,18 +153,18 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           </div>
 
           <div className="space-y-1">
-            <h4 className="font-semibold text-headline-sm leading-tight font-sans text-neutral-dark">
+            <h2 className="font-semibold text-headline-sm leading-tight font-sans text-neutral-dark">
               {selectedRecord.window_title}
-            </h4>
+            </h2>
             <p className="text-text-secondary text-body-sm leading-relaxed">{selectedRecord.description}</p>
           </div>
 
           {/* Unique Scene Elements & Tools */}
           {selectedRecord.is_processed && selectedRecord.unique_things && (
             <div className="bg-surface-container-low p-4 rounded border border-surface-container-high space-y-2">
-              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary flex items-center gap-1.5 font-messina">
+              <h3 className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary flex items-center gap-1.5 font-messina">
                 <Sparkles className="w-4 h-4 text-primary" /> Unique Scene Elements &amp; Tools
-              </h5>
+              </h3>
               <div className="bg-surface-container-lowest border border-surface-container p-3 rounded space-y-1.5 max-h-48 overflow-y-auto text-left">
                 {selectedRecord.unique_things.split('\n')
                   .map(line => line.replace(/^[-\*\s•\d\.]+\s*/, '').trim())
@@ -182,9 +182,9 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           {/* Collapsible fully parsed OCR text preview (IBM Plex Mono) */}
           {selectedRecord.ocr_text && (
             <div className="bg-surface-container-low p-4 rounded border border-surface-container-high space-y-2">
-              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary flex items-center gap-1.5 font-messina">
+              <h3 className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary flex items-center gap-1.5 font-messina">
                 <FileText className="w-4 h-4 text-primary" /> Fully Parsed Code &amp; Extracted Text (OCR)
-              </h5>
+              </h3>
               <pre className="text-technical-sm font-mono text-neutral-dark whitespace-pre-wrap select-all max-h-48 overflow-y-auto border border-surface-container p-2 rounded bg-surface-container-lowest leading-normal">
                 {selectedRecord.ocr_text}
               </pre>

@@ -207,11 +207,11 @@ export const GalleryTab: React.FC<GalleryTabProps> = ({
                           className="absolute bottom-2 left-2 z-10 flex gap-1 bg-surface-container-lowest/95 p-0.5 rounded border border-surface-container-high text-[9px] font-semibold font-messina"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <button
+                           <button
                             type="button"
                             onClick={() => setCardViewFull((prev) => ({ ...prev, [rec.id]: false }))}
                             className={`px-1.5 py-0.5 rounded-sm transition-colors cursor-pointer ${
-                              !cardViewFull[rec.id] ? 'bg-primary text-on-primary font-bold' : 'text-text-secondary hover:text-neutral-dark'
+                              !cardViewFull[rec.id] ? 'bg-primary text-on-primary font-bold' : 'text-neutral-dark hover:text-primary font-medium'
                             }`}
                           >
                             Active
@@ -220,7 +220,7 @@ export const GalleryTab: React.FC<GalleryTabProps> = ({
                             type="button"
                             onClick={() => setCardViewFull((prev) => ({ ...prev, [rec.id]: true }))}
                             className={`px-1.5 py-0.5 rounded-sm transition-colors cursor-pointer ${
-                              cardViewFull[rec.id] ? 'bg-primary text-on-primary font-bold' : 'text-text-secondary hover:text-neutral-dark'
+                              cardViewFull[rec.id] ? 'bg-primary text-on-primary font-bold' : 'text-neutral-dark hover:text-primary font-medium'
                             }`}
                           >
                             Full
@@ -317,15 +317,15 @@ export const GalleryTab: React.FC<GalleryTabProps> = ({
                           </span>
                         )}
                         {!rec.is_processed && (
-                          <span className="px-2 h-6 flex items-center bg-warning-light text-tertiary rounded-full text-indicator-bold border border-attention-yellow/30 dark:bg-attention-yellow/10 dark:text-attention-yellow dark:border-attention-yellow/20 animate-pulse-slow text-[10px] font-messina">
+                          <span className="px-2 h-6 flex items-center bg-warning-light text-on-tertiary-container rounded-full text-indicator-bold border border-attention-yellow/30 dark:bg-attention-yellow/10 dark:text-attention-yellow dark:border-attention-yellow/20 animate-pulse-slow text-[10px] font-messina">
                             Pending
                           </span>
                         )}
                       </div>
 
-                      <h4 className="font-semibold text-headline-sm text-neutral-dark truncate" title={rec.window_title}>
+                      <h2 className="font-semibold text-headline-sm text-neutral-dark truncate" title={rec.window_title}>
                         {rec.window_title}
-                      </h4>
+                      </h2>
 
                       <p className="text-text-secondary text-body-sm line-clamp-3 mt-1" title={rec.description}>
                         {rec.description}
