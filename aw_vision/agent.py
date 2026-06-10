@@ -46,12 +46,16 @@ def tool_search_screenshots_semantic(query: str, limit: int = 5) -> str:
                 os.path.basename(image_path_val) if image_path_val else "Archived (Image deleted, metadata preserved)"
             )
 
+            ocr_text = r.get("ocr_text", "N/A") or "N/A"
+            if len(ocr_text) > 500:
+                ocr_text = ocr_text[:500].strip() + "..."
+
             output.append(
                 f"--- Result (Similarity: {r.get('_distance', 'N/A')}) ---\n"
                 f"Time: {dt}\n"
                 f"App: {r.get('app_name')} | Window: {r.get('window_title')}\n"
                 f"Description: {r.get('description')}\n"
-                f"Extracted OCR Text: {r.get('ocr_text', 'N/A')}\n"
+                f"Extracted OCR Text: {ocr_text}\n"
                 f"Tags: {tags_str}\n"
                 f"Project Mapped: {r.get('project_number')}\n"
                 f"Screenshot: {screenshot_name}\n"
@@ -193,12 +197,16 @@ def tool_get_recent_screenshots(limit: Union[int, str] = 10) -> str:
                 os.path.basename(image_path_val) if image_path_val else "Archived (Image deleted, metadata preserved)"
             )
 
+            ocr_text = r.get("ocr_text", "N/A") or "N/A"
+            if len(ocr_text) > 150:
+                ocr_text = ocr_text[:150].strip() + "..."
+
             output.append(
                 f"--- Record ---\n"
                 f"Time: {dt}\n"
                 f"App: {r.get('app_name')} | Window: {r.get('window_title')}\n"
                 f"Description: {r.get('description')}\n"
-                f"Extracted OCR Text: {r.get('ocr_text', 'N/A')}\n"
+                f"Extracted OCR Text: {ocr_text}\n"
                 f"Tags: {tags_str}\n"
                 f"Project Mapped: {r.get('project_number')}\n"
                 f"Screenshot: {screenshot_name}\n"
@@ -285,7 +293,7 @@ def run_agent_node(state: AgentState) -> AgentState:
             "model": config.vision_model,  # Re-use vision_model or any default text model
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0.1},
+            "options": {"temperature": 0.1, "num_ctx": 8192},
             "keep_alive": 0,
         }
         resp = requests.post(url, json=payload, timeout=180.0)
