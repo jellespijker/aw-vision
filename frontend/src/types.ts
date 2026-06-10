@@ -38,6 +38,7 @@ export interface HistoryRecord {
   distance?: number
   is_processed?: boolean
   human_labeled?: boolean
+  unique_things?: string | null
 }
 
 export interface Project {

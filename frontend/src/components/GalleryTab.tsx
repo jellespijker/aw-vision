@@ -331,6 +331,21 @@ export const GalleryTab: React.FC<GalleryTabProps> = ({
                         {rec.description}
                       </p>
 
+                      {/* Unique Scene Elements & Tools Inline Badges */}
+                      {rec.is_processed && rec.unique_things && (
+                        <div className="flex flex-wrap gap-1 mt-2 mb-1">
+                          {rec.unique_things.split('\n')
+                            .map(line => line.replace(/^[-\*\s•\d\.]+\s*/, '').trim())
+                            .filter(line => line.length > 0)
+                            .slice(0, 3)
+                            .map((thing, idx) => (
+                              <span key={idx} className="text-[10px] font-medium bg-surface-container-low border border-surface-container-high text-text-secondary px-1.5 py-0.5 rounded truncate max-w-[150px]" title={thing}>
+                                {thing}
+                              </span>
+                            ))}
+                        </div>
+                      )}
+
                       {rec.is_processed && rec.ocr_text && (
                         <div className="mt-3 bg-surface-container-low p-2.5 rounded border border-surface-container-high">
                           <button

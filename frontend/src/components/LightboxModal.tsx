@@ -1,5 +1,5 @@
 import React from 'react'
-import { X, Archive, User, FileText, RefreshCw, Cpu } from 'lucide-react'
+import { X, Archive, User, FileText, RefreshCw, Cpu, Sparkles } from 'lucide-react'
 import { HistoryRecord, Project } from '../types'
 
 interface LightboxModalProps {
@@ -158,6 +158,26 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             </h4>
             <p className="text-text-secondary text-body-sm leading-relaxed">{selectedRecord.description}</p>
           </div>
+
+          {/* Unique Scene Elements & Tools */}
+          {selectedRecord.is_processed && selectedRecord.unique_things && (
+            <div className="bg-surface-container-low p-4 rounded border border-surface-container-high space-y-2">
+              <h5 className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary flex items-center gap-1.5 font-messina">
+                <Sparkles className="w-4 h-4 text-primary" /> Unique Scene Elements &amp; Tools
+              </h5>
+              <div className="bg-surface-container-lowest border border-surface-container p-3 rounded space-y-1.5 max-h-48 overflow-y-auto text-left">
+                {selectedRecord.unique_things.split('\n')
+                  .map(line => line.replace(/^[-\*\s•\d\.]+\s*/, '').trim())
+                  .filter(line => line.length > 0)
+                  .map((thing, idx) => (
+                    <div key={idx} className="flex items-start gap-2 text-body-sm text-neutral-dark font-medium">
+                      <span className="w-1.5 h-1.5 bg-primary rounded-full mt-1.5 flex-shrink-0"></span>
+                      <span>{thing}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
 
           {/* Collapsible fully parsed OCR text preview (IBM Plex Mono) */}
           {selectedRecord.ocr_text && (
