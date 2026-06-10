@@ -15,4 +15,14 @@ fileignoreconfig:
   checksum: 629606cde09ebbf0f781dfaa9ad944b641cd03e0e1a72a9b0a66681ce6ce026f
 - filename: frontend/src/App.tsx
   checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
+- filename: frontend/src/components/ProjectsTab.tsx
+  checksum: a3b736362c200f11b0419c5c773e5d5ae7d1fcc1120c5c38aa1c7a83cf79c882
+- filename: frontend/src/components/ScreenshotCarousel.tsx
+  checksum: c1f77c3055c7c53fafaba7b5d8e8ba8840473e348eea1b4730f86e7e043b11db
+- filename: frontend/src/components/LightboxModal.tsx
+  checksum: 679d66470dccfafd3f1b6d0660f1e03dd4a0d491d1c7e98f6ad8fae9dd12c28c
+- filename: frontend/src/components/GalleryTab.tsx
+  checksum: d85d1767a0e120093ac41c033e26a395312189b032fe893f6af4e12b0127c9d6
+- filename: frontend/src/components/AgentTab.tsx
+  checksum: 23a2a4bff3ca8741c69bf6c7d6171665700be3280c0007f673a17c59e5d58388
 version: ""

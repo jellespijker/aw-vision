@@ -179,7 +179,16 @@ class VisionDB:
         results = tbl.search().where(where).limit(100000).to_list()
         # Sort by timestamp descending
         results.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
-        return results[:limit]
+
+        # Deduplicate by id (first seen is newest)
+        deduped = []
+        seen = set()
+        for r in results:
+            rid = r.get("id")
+            if rid not in seen:
+                seen.add(rid)
+                deduped.append(r)
+        return deduped[:limit]
 
     def get_all_records(self, limit: int = 500) -> list:
         """Fetch all records ordered by timestamp descending."""
@@ -187,7 +196,16 @@ class VisionDB:
         # Retrieve all records (up to a large safety cap) to sort them globally, then slice to limit
         results = tbl.search().limit(100000).to_list()
         results.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
-        return results[:limit]
+
+        # Deduplicate by id (first seen is newest)
+        deduped = []
+        seen = set()
+        for r in results:
+            rid = r.get("id")
+            if rid not in seen:
+                seen.add(rid)
+                deduped.append(r)
+        return deduped[:limit]
 
     def get_project_statistics(self) -> dict:
         """Aggregate total counted hours per project.

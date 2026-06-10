@@ -331,8 +331,24 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
             pending_records = filtered_pending
 
         # 4. Merge and sort globally by timestamp descending
+        processed_ids = {r.get("id") for r in cleaned_db if r.get("id")}
+        pending_records = [p for p in pending_records if p.get("id") not in processed_ids]
+
         merged = pending_records + cleaned_db
         merged.sort(key=lambda x: x.get("timestamp", 0.0), reverse=True)
+
+        # Deduplicate merged records by 'id' to ensure absolute uniqueness for frontend keys
+        deduped_merged = []
+        seen_ids = set()
+        for item in merged:
+            rid = item.get("id")
+            if rid:
+                if rid not in seen_ids:
+                    seen_ids.add(rid)
+                    deduped_merged.append(item)
+            else:
+                deduped_merged.append(item)
+        merged = deduped_merged
 
         total_count = len(merged)
 
