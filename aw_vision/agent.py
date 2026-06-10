@@ -23,7 +23,7 @@ def tool_search_screenshots_semantic(query: str, limit: int = 5) -> str:
         # Step 1: Embed query via Ollama
         url = f"{config.ollama_host}/api/embeddings"
         payload = {"model": config.embedding_model, "prompt": query, "keep_alive": 0}
-        resp = requests.post(url, json=payload, timeout=30.0)
+        resp = requests.post(url, json=payload, timeout=60.0)
         if resp.status_code != 200:
             return f"Error embedding query: {resp.text}"
 
@@ -140,7 +140,7 @@ def tool_get_similar_labeled_snapshots(query: str, limit: int = 5) -> str:
         # Step 1: Embed query via Ollama
         url = f"{config.ollama_host}/api/embeddings"
         payload = {"model": config.embedding_model, "prompt": query, "keep_alive": 0}
-        resp = requests.post(url, json=payload, timeout=30.0)
+        resp = requests.post(url, json=payload, timeout=60.0)
         if resp.status_code != 200:
             return f"Error embedding query: {resp.text}"
 
@@ -173,10 +173,46 @@ def tool_get_similar_labeled_snapshots(query: str, limit: int = 5) -> str:
         return f"Error searching similar labeled snapshots: {e}"
 
 
+def tool_get_recent_screenshots(limit: Union[int, str] = 10) -> str:
+    """Retrieve the most recent desktop screenshots, metadata, and extracted OCR text from the database."""
+    try:
+        try:
+            limit = int(limit)
+        except (ValueError, TypeError):
+            limit = 10
+        results = db.get_all_records(limit=limit)
+        if not results:
+            return "No recent screenshots or active screens found in database."
+
+        output = []
+        for r in results:
+            dt = datetime.fromtimestamp(r.get("timestamp", 0)).strftime("%Y-%m-%d %H:%M:%S")
+            tags_str = ", ".join(r.get("tags", []))
+            image_path_val = r.get("image_path")
+            screenshot_name = (
+                os.path.basename(image_path_val) if image_path_val else "Archived (Image deleted, metadata preserved)"
+            )
+
+            output.append(
+                f"--- Record ---\n"
+                f"Time: {dt}\n"
+                f"App: {r.get('app_name')} | Window: {r.get('window_title')}\n"
+                f"Description: {r.get('description')}\n"
+                f"Extracted OCR Text: {r.get('ocr_text', 'N/A')}\n"
+                f"Tags: {tags_str}\n"
+                f"Project Mapped: {r.get('project_number')}\n"
+                f"Screenshot: {screenshot_name}\n"
+            )
+        return "\n".join(output)
+    except Exception as e:
+        return f"Error retrieving recent screenshots: {e}"
+
+
 # Export a tool mapping
 TOOLS = {
     "search_screenshots_semantic": tool_search_screenshots_semantic,
     "get_similar_labeled_snapshots": tool_get_similar_labeled_snapshots,
+    "get_recent_screenshots": tool_get_recent_screenshots,
     "get_active_projects": tool_get_active_projects,
     "aggregate_project_hours": tool_aggregate_project_hours,
     "query_github": tool_query_github,
@@ -197,15 +233,19 @@ def run_agent_node(state: AgentState) -> AgentState:
     """Call Ollama and let the agent think or call a tool."""
     messages = state["messages"]
 
+    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     # Render messages into a text prompt for Ollama
     prompt_lines = [
         "You are an advanced agentic productivity assistant integrated with ActivityWatch.",
+        f"The current local date and time is: {current_time_str}.",
         "You have access to the user's desktop history via screenshot descriptions, tags, active window titles,",
         "as well as local work hours and external integrations (GitHub, Jira).",
         "Use the tools provided to answer the user's questions.",
         "Your available tools are:",
         "- search_screenshots_semantic(query): Search vector db of screenshots using semantic search.",
         "- get_similar_labeled_snapshots(query): Search vector db for similar labeled snapshots, giving 5x weight to human-verified project labels and matching tags/applications.",
+        "- get_recent_screenshots(limit): Retrieve the most recent desktop screenshots, ordered by timestamp descending.",
         "- get_active_projects(): List configured projects, descriptions, and work guidelines.",
         "- aggregate_project_hours(): Return total active hours spent on each project number.",
         "- query_github(query): Find commits, PRs, or issues on user's GitHub repositories.",
@@ -213,11 +253,15 @@ def run_agent_node(state: AgentState) -> AgentState:
         "",
         "CRITICAL: Always perform 'search_screenshots_semantic' first if the user is asking about past active sessions,",
         "such as browsing website pages, looking for sneakers, reading files, or coding topics.",
+        "CRITICAL: Always perform 'search_screenshots_semantic' first if the user asks about a specific person (e.g., 'Who is Sergii?', 'What did I discuss with Arjen?'),",
+        "specific projects, files, websites, or chat conversations. Do not assume you know them from your pre-trained weights; always search your local computer memory first.",
+        "CRITICAL: Always use 'get_recent_screenshots' if the user asks what they worked on recently (e.g., in the past hour, today, this morning, or wants a timeline of recent activity).",
         "CRITICAL: If the user is asking to categorize a task/application under a project, or wants to check how similar activities were labeled, call 'get_similar_labeled_snapshots' to leverage historical human-verified and tag-matched project associations.",
         "",
         "To invoke a tool, output a single line matching this format exactly:",
         "CALL_TOOL: tool_name, argument_string",
         "Example: CALL_TOOL: search_screenshots_semantic, purple sneakers",
+        "Example: CALL_TOOL: get_recent_screenshots, 15",
         "Example: CALL_TOOL: aggregate_project_hours, None",
         "",
         "If you have enough information to answer, output your final answer directly to the user (do not use CALL_TOOL).",
@@ -244,7 +288,7 @@ def run_agent_node(state: AgentState) -> AgentState:
             "options": {"temperature": 0.1},
             "keep_alive": 0,
         }
-        resp = requests.post(url, json=payload, timeout=60.0)
+        resp = requests.post(url, json=payload, timeout=180.0)
         if resp.status_code == 200:
             reply = resp.json().get("response", "").strip()
         else:
