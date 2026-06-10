@@ -14,6 +14,15 @@ fileignoreconfig:
 - filename: aw_vision/server.py
   checksum: 629606cde09ebbf0f781dfaa9ad944b641cd03e0e1a72a9b0a66681ce6ce026f
 - filename: frontend/src/App.tsx
-  checksum: 126389568dab71d9de1dfa466f6388f674a10588b1414ae0d750ff5cc49a9901
+  checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
+- filename: frontend/src/components/ProjectsTab.tsx
+  checksum: a3b736362c200f11b0419c5c773e5d5ae7d1fcc1120c5c38aa1c7a83cf79c882
+- filename: frontend/src/components/ScreenshotCarousel.tsx
+  checksum: c1f77c3055c7c53fafaba7b5d8e8ba8840473e348eea1b4730f86e7e043b11db
+- filename: frontend/src/components/LightboxModal.tsx
+  checksum: 7959bd3424ded5b73854d169d815b0c48a6a7aeffd8dcd59f43089077a520019
+- filename: frontend/src/components/GalleryTab.tsx
+  checksum: 76e79bb0c1d30be10d3a750690b71e6a95bcd11ea1b283d9c8ffefc0198cb9c6
+- filename: frontend/src/components/AgentTab.tsx
+  checksum: 23a2a4bff3ca8741c69bf6c7d6171665700be3280c0007f673a17c59e5d58388
 version: ""
-

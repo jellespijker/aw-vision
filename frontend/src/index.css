@@ -48,7 +48,7 @@
   --color-danger-active: #990014;
   --color-danger-surface: #FFE6E9;
   --color-warning-light: #FFF8D9;
-  --color-text-secondary: #707070;
+  --color-text-secondary: #344054;
   --color-disabled: #8D8D8D;
   --color-accent-surface: #E7E7FD;
   
@@ -150,6 +150,42 @@ body {
   margin: 0;
   padding: 0;
   overflow-x: hidden;
-  background-color: #fcf9f8;
-  color: #1b1c1c;
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
+
+.dark {
+  --color-surface: #121212;
+  --color-surface-dim: #151515;
+  --color-surface-bright: #1e1e1e;
+  --color-surface-container-lowest: #1a1a1a;
+  --color-surface-container-low: #222222;
+  --color-surface-container: #282828;
+  --color-surface-container-high: #333333;
+  --color-surface-container-highest: #3c3c3c;
+  --color-on-surface: #f3f0ef;
+  --color-on-surface-variant: #c6c4da;
+  --color-inverse-surface: #fcf9f8;
+  --color-inverse-on-surface: #1b1c1c;
+  --color-outline: #9b9aa9;
+  --color-outline-variant: #444557;
+  --color-primary: #7c83ff;
+  --color-on-primary: #000066;
+  --color-primary-container: #363cff;
+  --color-on-primary-container: #e7e7fd;
+  --color-inverse-primary: #0500af;
+  --color-neutral-dark: #fcf9f8;
+  --color-text-secondary: #cbd5e1;
+  --color-disabled: #666666;
+  --color-accent-surface: #1f2152;
+}
+
+/* Custom Scrollbars in Dark Mode */
+.dark ::-webkit-scrollbar-thumb {
+  background: #333333;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #444444;
+}
+

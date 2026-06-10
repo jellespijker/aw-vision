@@ -1,0 +1,6 @@
+# aw-vision - Local Visual Indexing Extension for ActivityWatch
+
+aw-vision is an advanced local-first desktop indexing and semantic search server. It allows users to query, analyze, and track desktop history locally.
+
+## Sections
+- [Dashboard](/) - View visual screenshot history, query the local assistant, and manage custom project mappings.
