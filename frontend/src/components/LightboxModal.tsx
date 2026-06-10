@@ -1,6 +1,6 @@
 import React from 'react'
 import { X, Archive, User, FileText, RefreshCw, Cpu, Sparkles } from 'lucide-react'
-import { HistoryRecord, Project } from '../types'
+import type { HistoryRecord, Project } from '../types'
 
 interface LightboxModalProps {
   isOpen: boolean

@@ -11,7 +11,7 @@ import {
   FileText,
   Maximize2
 } from 'lucide-react'
-import { DaemonStatus, HistoryRecord, Project } from '../types'
+import type { DaemonStatus, HistoryRecord, Project } from '../types'
 import { ScreenshotCarousel } from './ScreenshotCarousel'
 
 interface GalleryTabProps {
@@ -38,6 +38,9 @@ interface GalleryTabProps {
   getPageRange: () => number[]
   expandedOcrCardId: string | null
   setExpandedOcrCardId: (val: string | null) => void
+  hasMore: boolean
+  loadMore: () => Promise<void>
+  totalCount: number
 }
 
 export const GalleryTab: React.FC<GalleryTabProps> = ({
@@ -63,7 +66,10 @@ export const GalleryTab: React.FC<GalleryTabProps> = ({
   totalPages,
   getPageRange,
   expandedOcrCardId,
-  setExpandedOcrCardId
+  setExpandedOcrCardId,
+  hasMore,
+  loadMore,
+  totalCount
 }) => {
   const [viewMode, setViewMode] = useState<'carousel' | 'grid'>('carousel')
   const [cardViewFull, setCardViewFull] = useState<Record<string, boolean>>({})
@@ -181,6 +187,9 @@ export const GalleryTab: React.FC<GalleryTabProps> = ({
             formatTimestamp={formatTimestamp}
             API_BASE={API_BASE}
             openImageLightbox={openImageLightbox}
+            hasMore={hasMore}
+            loadMore={loadMore}
+            totalCount={totalCount}
           />
         </div>
       ) : (

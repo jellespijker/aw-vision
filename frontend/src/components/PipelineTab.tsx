@@ -7,11 +7,10 @@ import {
   Shield,
   RefreshCw,
   Server,
-  Zap,
   CheckCircle,
   Clock
 } from 'lucide-react'
-import { DaemonStatus } from '../types'
+import type { DaemonStatus } from '../types'
 
 interface PipelineTabProps {
   status: DaemonStatus | null

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   ChevronLeft,
   ChevronRight,
@@ -9,7 +9,7 @@ import {
   Cpu,
   Maximize2
 } from 'lucide-react'
-import { HistoryRecord, Project } from '../types'
+import type { HistoryRecord, Project } from '../types'
 
 interface ScreenshotCarouselProps {
   historyRecords: HistoryRecord[]
@@ -22,6 +22,9 @@ interface ScreenshotCarouselProps {
   formatTimestamp: (ts: number) => string
   API_BASE: string
   openImageLightbox: (rec: HistoryRecord) => void
+  hasMore: boolean
+  loadMore: () => Promise<void>
+  totalCount: number
 }
 
 export const ScreenshotCarousel: React.FC<ScreenshotCarouselProps> = ({
@@ -34,30 +37,114 @@ export const ScreenshotCarousel: React.FC<ScreenshotCarouselProps> = ({
   logs,
   formatTimestamp,
   API_BASE,
-  openImageLightbox
+  openImageLightbox,
+  hasMore,
+  loadMore,
+  totalCount
 }) => {
   const [activeIndex, setActiveIndex] = useState<number>(0)
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState<boolean>(false)
   const [ocrExpanded, setOcrExpanded] = useState<boolean>(false)
   const [logsExpanded, setLogsExpanded] = useState<boolean>(false)
 
-  // Reset active index when historyRecords updates (like new searches)
+  const thumbnailRef = useRef<HTMLDivElement | null>(null)
+
+  // 1. In-place sync activeId and activeIndex when historyRecords updates
   useEffect(() => {
-    setActiveIndex(0)
+    if (historyRecords.length > 0) {
+      if (!activeId) {
+        // Initial load
+        setActiveId(historyRecords[0].id)
+        setActiveIndex(0)
+      } else {
+        const foundIndex = historyRecords.findIndex((r) => r.id === activeId)
+        if (foundIndex !== -1) {
+          setActiveIndex(foundIndex)
+        } else {
+          // Reset to 0 if the previous selection is no longer in the list (e.g. query change)
+          setActiveId(historyRecords[0].id)
+          setActiveIndex(0)
+        }
+      }
+    }
+  }, [historyRecords, activeId])
+
+  // 2. Center/Scroll active thumbnail smoothly into view
+  useEffect(() => {
+    if (thumbnailRef.current) {
+      const activeChild = thumbnailRef.current.children[activeIndex] as HTMLElement
+      if (activeChild) {
+        activeChild.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+          inline: 'center'
+        })
+      }
+    }
+  }, [activeIndex])
+
+  // 3. Map vertical mouse wheel scrolling to horizontal scrolling for thumbnail container
+  useEffect(() => {
+    const el = thumbnailRef.current
+    if (!el) return
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY !== 0) {
+        e.preventDefault()
+        el.scrollLeft += e.deltaY * 1.5
+      }
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+    }
   }, [historyRecords])
+
+  // 4. Trigger auto-loading of more screenshots when reaching the end of current records
+  useEffect(() => {
+    if (hasMore && activeIndex >= historyRecords.length - 5) {
+      loadMore()
+    }
+  }, [activeIndex, historyRecords.length, hasMore, loadMore])
 
   if (historyRecords.length === 0) return null
 
-  const activeRecord = historyRecords[activeIndex]
+  // Ensure index is within safe bounds to prevent any crash
+  const safeActiveIndex = activeIndex < historyRecords.length ? activeIndex : 0
+  const activeRecord = historyRecords[safeActiveIndex]
   const isProcessing = processingIds.includes(activeRecord.id)
   const currentLogs = logs[activeRecord.id] || []
 
   const handlePrev = () => {
-    setActiveIndex((prev) => (prev === 0 ? historyRecords.length - 1 : prev - 1))
+    setActiveIndex((prev) => {
+      const newIdx = prev === 0 ? historyRecords.length - 1 : prev - 1
+      setActiveId(historyRecords[newIdx].id)
+      return newIdx
+    })
   }
 
   const handleNext = () => {
-    setActiveIndex((prev) => (prev === historyRecords.length - 1 ? 0 : prev + 1))
+    setActiveIndex((prev) => {
+      if (prev === historyRecords.length - 1) {
+        if (hasMore) {
+          loadMore()
+          return prev
+        } else {
+          setActiveId(historyRecords[0].id)
+          return 0
+        }
+      }
+      const newIdx = prev + 1
+      setActiveId(historyRecords[newIdx].id)
+      return newIdx
+    })
+  }
+
+  const handleThumbnailClick = (idx: number) => {
+    setActiveIndex(idx)
+    setActiveId(historyRecords[idx].id)
   }
 
   return (
@@ -67,7 +154,7 @@ export const ScreenshotCarousel: React.FC<ScreenshotCarouselProps> = ({
         {/* Stage Header */}
         <div className="p-4 bg-surface-container-low border-b border-surface-container-high flex items-center justify-between font-messina text-action-md">
           <span className="text-text-secondary font-medium font-mono text-[11px]">
-            Capture {activeIndex + 1} of {historyRecords.length}
+            Capture {safeActiveIndex + 1} of {totalCount}
           </span>
           <span className="bg-black/70 text-white text-[10px] font-mono px-2 py-0.5 rounded">
             {formatTimestamp(activeRecord.timestamp)}
@@ -150,13 +237,16 @@ export const ScreenshotCarousel: React.FC<ScreenshotCarouselProps> = ({
         </div>
 
         {/* Thumbnail Navigation Strip */}
-        <div className="p-3 bg-surface-container-low border-t border-surface-container-high overflow-x-auto flex gap-2 items-center justify-center">
+        <div
+          ref={thumbnailRef}
+          className="p-3 bg-surface-container-low border-t border-surface-container-high overflow-x-auto flex gap-2 items-center justify-start scrollbar-thin"
+        >
           {historyRecords.map((rec, idx) => {
-            const isSelected = idx === activeIndex
+            const isSelected = idx === safeActiveIndex
             return (
               <button
                 key={rec.id}
-                onClick={() => setActiveIndex(idx)}
+                onClick={() => handleThumbnailClick(idx)}
                 className={`relative w-12 h-8 rounded border overflow-hidden flex-shrink-0 transition-all cursor-pointer ${
                   isSelected ? 'border-primary ring-1 ring-primary' : 'border-surface-container-high hover:border-primary'
                 }`}

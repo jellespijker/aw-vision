@@ -1,6 +1,6 @@
 import React from 'react'
 import { Save, FileText } from 'lucide-react'
-import { Project } from '../types'
+import type { Project } from '../types'
 
 interface ProjectsTabProps {
   projectsList: Project[]

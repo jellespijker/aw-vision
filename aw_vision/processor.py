@@ -174,23 +174,50 @@ class BulkProcessor:
         return queue
 
     def get_ollama_embedding(self, text: str, rec_id: str = None) -> list[float]:
-        """Fetch vector embedding for the description using Ollama."""
-        try:
-            url = f"{config.ollama_host}/api/embeddings"
-            payload = {"model": config.embedding_model, "prompt": text, "keep_alive": 0}
-            resp = requests.post(url, json=payload, timeout=30.0)
-            if resp.status_code == 200:
-                return resp.json().get("embedding", [])
-        except Exception as e:
-            err_msg = f"Error generating embedding from Ollama: {e}"
-            if rec_id:
-                self.log_step(rec_id, err_msg)
-            else:
-                print(err_msg)
+        """Fetch vector embedding for the description using configured provider (Gemini or Ollama)."""
+        from aw_vision.settings import settings_store
+        from aw_vision.gemini import generate_gemini_embedding, is_internet_online
 
-        # Fallback to zero vector if embedding fails (to prevent pipeline crash)
-        dim = db.get_embedding_dimension()
-        return [0.0] * dim
+        provider = settings_store.get("provider")
+        use_gemini = (provider == "gemini" and is_internet_online())
+
+        embedding = []
+        if use_gemini:
+            try:
+                embedding = generate_gemini_embedding(text)
+            except Exception as e:
+                err_msg = f"Error generating Gemini embedding: {e}. Falling back to Ollama."
+                if rec_id:
+                    self.log_step(rec_id, err_msg)
+                else:
+                    print(err_msg)
+
+        if not embedding:
+            try:
+                model = settings_store.get("ollama_embedding_model") or config.embedding_model
+                url = f"{config.ollama_host}/api/embeddings"
+                payload = {"model": model, "prompt": text, "keep_alive": 0}
+                resp = requests.post(url, json=payload, timeout=30.0)
+                if resp.status_code == 200:
+                    embedding = resp.json().get("embedding", [])
+            except Exception as e:
+                err_msg = f"Error generating embedding from Ollama: {e}"
+                if rec_id:
+                    self.log_step(rec_id, err_msg)
+                else:
+                    print(err_msg)
+
+        expected_dim = db.get_embedding_dimension()
+        if not embedding:
+            return [0.0] * expected_dim
+
+        # Pad or truncate to expected dimension
+        if len(embedding) < expected_dim:
+            embedding = list(embedding) + [0.0] * (expected_dim - len(embedding))
+        elif len(embedding) > expected_dim:
+            embedding = list(embedding)[:expected_dim]
+
+        return embedding
 
     def extract_ocr_text(self, img_path: Path, rec_id: str = None, keep_alive: int = 0) -> str:
         """Call local Ollama OCR model to extract all readable text from screenshot."""
@@ -450,14 +477,21 @@ class BulkProcessor:
 
                 # Only run OCR if not already cached
                 if "ocr_text" not in meta or meta["ocr_text"] is None:
-                    # Keep model loaded during the sweep, unload immediately on the last item of Phase 1
-                    keep_alive = 0 if (idx == N - 1) else 300
-                    ocr_text = self.extract_ocr_text(img_path, rec_id, keep_alive=keep_alive)
-                    meta["ocr_text"] = ocr_text
+                    from aw_vision.settings import settings_store
+                    from aw_vision.gemini import is_internet_online
+                    use_gemini = (settings_store.get("provider") == "gemini" and is_internet_online())
 
-                    # Persist ocr_text to the metadata JSON file on disk
-                    with open(meta_path, "w", encoding="utf-8") as f:
-                        json.dump(meta, f, indent=2)
+                    if use_gemini:
+                        self.log_step(rec_id, "Gemini provider is active & online. Skipping local OCR; will run combined Gemini OCR + Vision in Phase 2.")
+                    else:
+                        # Keep model loaded during the sweep, unload immediately on the last item of Phase 1
+                        keep_alive = 0 if (idx == N - 1) else 300
+                        ocr_text = self.extract_ocr_text(img_path, rec_id, keep_alive=keep_alive)
+                        meta["ocr_text"] = ocr_text
+
+                        # Persist ocr_text to the metadata JSON file on disk
+                        with open(meta_path, "w", encoding="utf-8") as f:
+                            json.dump(meta, f, indent=2)
                 else:
                     self.log_step(rec_id, "OCR text already cached in metadata JSON. Skipping OCR.")
             except Exception as e:
@@ -474,6 +508,38 @@ class BulkProcessor:
                 if "description" not in meta or meta["description"] is None:
                     full_img_filename = f"{img_path.stem}_full.png"
                     full_img_path = img_path.parent / full_img_filename
+
+                    from aw_vision.settings import settings_store
+                    from aw_vision.gemini import run_gemini_combined_ocr_vision, is_internet_online
+                    use_gemini = (settings_store.get("provider") == "gemini" and is_internet_online())
+
+                    if use_gemini:
+                        self.log_step(rec_id, "Running combined Gemini OCR and Vision analysis...")
+                        existing_tags = db.get_all_unique_tags()
+                        if len(existing_tags) > 100:
+                            existing_tags = existing_tags[:100]
+                        try:
+                            res = run_gemini_combined_ocr_vision(
+                                img_path=img_path,
+                                full_img_path=full_img_path if full_img_path.exists() else None,
+                                projects=projects,
+                                existing_tags=existing_tags
+                            )
+                            meta["ocr_text"] = res.get("ocr_text", "")
+                            meta["description"] = res.get("description", "No description generated.")
+                            meta["tags"] = res.get("tags", [])
+                            meta["project_number"] = res.get("project_number", "None")
+                            meta["unique_things"] = res.get("unique_things", "None detected.")
+                            meta["vector"] = []  # Generated in Phase 3
+
+                            # Persist results to metadata JSON file on disk
+                            with open(meta_path, "w", encoding="utf-8") as f:
+                                json.dump(meta, f, indent=2)
+
+                            self.log_step(rec_id, f"Gemini Combined Analysis complete. Description: {meta['description']}")
+                            continue
+                        except Exception as eg:
+                            self.log_step(rec_id, f"Error calling Gemini, falling back to local Ollama: {eg}")
 
                     aw_context_str = "None"
                     bucket_context = meta.get("aw_bucket_context", {})
@@ -797,25 +863,46 @@ You must respond in valid JSON format matching this schema:
 
                 embedding = meta.get("vector")
                 if not embedding or len(embedding) == 0:
-                    self.log_step(rec_id, f"Generating semantic embedding (1024-dim joint vector) using '{config.embedding_model}'...")
                     embedding_text = f"Description: {description}\n\nExtracted Screen Text:\n{ocr_text}"
-
-                    # Keep embedding model loaded during the sweep, unload on the very last item of Phase 3
-                    keep_alive = 0 if (idx == N - 1) else 300
-
                     embedding = []
-                    try:
-                        url = f"{config.ollama_host}/api/embeddings"
-                        payload = {"model": config.embedding_model, "prompt": embedding_text, "keep_alive": keep_alive}
-                        resp = requests.post(url, json=payload, timeout=30.0)
-                        if resp.status_code == 200:
-                            embedding = resp.json().get("embedding", [])
-                    except Exception as ee:
-                        self.log_step(rec_id, f"Error generating embedding from Ollama: {ee}")
 
+                    from aw_vision.settings import settings_store
+                    from aw_vision.gemini import generate_gemini_embedding, is_internet_online
+                    use_gemini = (settings_store.get("provider") == "gemini" and is_internet_online())
+
+                    if use_gemini:
+                        self.log_step(rec_id, f"Generating Gemini semantic embedding using '{settings_store.get('gemini_embedding_model')}'...")
+                        try:
+                            embedding = generate_gemini_embedding(embedding_text)
+                        except Exception as eg_emb:
+                            self.log_step(rec_id, f"Error generating Gemini embedding: {eg_emb}. Falling back to Ollama.")
+
+                    # If Gemini embedding failed or provider is Ollama
+                    if not embedding:
+                        model = settings_store.get("ollama_embedding_model") or config.embedding_model
+                        self.log_step(rec_id, f"Generating local semantic embedding using '{model}'...")
+                        # Keep embedding model loaded during the sweep, unload on the very last item of Phase 3
+                        keep_alive = 0 if (idx == N - 1) else 300
+                        try:
+                            url = f"{config.ollama_host}/api/embeddings"
+                            payload = {"model": model, "prompt": embedding_text, "keep_alive": keep_alive}
+                            resp = requests.post(url, json=payload, timeout=30.0)
+                            if resp.status_code == 200:
+                                embedding = resp.json().get("embedding", [])
+                        except Exception as ee:
+                            self.log_step(rec_id, f"Error generating embedding from Ollama: {ee}")
+
+                # Enforce dynamic expected dimension to avoid LanceDB dimension mismatch errors
+                expected_dim = db.get_embedding_dimension()
                 if not embedding:
-                    dim = db.get_embedding_dimension()
-                    embedding = [0.0] * dim
+                    embedding = [0.0] * expected_dim
+                else:
+                    if len(embedding) < expected_dim:
+                        self.log_step(rec_id, f"Correction: Padding generated vector from {len(embedding)} to {expected_dim} to match DB layout.")
+                        embedding = list(embedding) + [0.0] * (expected_dim - len(embedding))
+                    elif len(embedding) > expected_dim:
+                        self.log_step(rec_id, f"Correction: Truncating generated vector from {len(embedding)} to {expected_dim} to match DB layout.")
+                        embedding = list(embedding)[:expected_dim]
 
                 # Build database record
                 db_record = {

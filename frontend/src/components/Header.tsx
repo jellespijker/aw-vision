@@ -1,6 +1,6 @@
 import React from 'react'
 import { Layers, Sun, Moon, RefreshCw } from 'lucide-react'
-import { DaemonStatus } from '../types'
+import type { DaemonStatus } from '../types'
 
 interface HeaderProps {
   darkMode: boolean
