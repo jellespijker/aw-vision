@@ -130,6 +130,9 @@ cygdb
 # ActivityWatch Local Captured/Temporary screenshots (if stored in-tree)
 *.png
 *.json
+!**/package.json
+!**/package-lock.json
+!**/tsconfig*.json
 projects.json
 !projects.json.example
 

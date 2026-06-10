@@ -248,6 +248,106 @@ def save_projects(projects: List[ProjectModel]):
         raise HTTPException(status_code=500, detail=f"Failed to save projects: {e}")
 
 
+RESOLUTION_MAP = {
+    "1m": 60.0,
+    "5m": 300.0,
+
+    "10m": 600.0,
+    "15m": 900.0,
+    "30m": 1800.0,
+    "1h": 3600.0,
+    "1d": 86400.0,
+    "1w": 604800.0,
+    "1M": 2592000.0,  # 30 days
+}
+
+
+@app.get("/api/projects/timeline")
+def get_projects_timeline(start_time: float, end_time: float, resolution: str = "1h"):
+    """Fetch aggregated timeline blocks for each project at the requested resolution."""
+    try:
+        from aw_vision.db import db
+        res_seconds = RESOLUTION_MAP.get(resolution, 3600.0)
+
+        # 1. Fetch binned timeline from LanceDB
+        data = db.get_binned_timeline(start_time, end_time, res_seconds)
+
+        # 2. Get list of configured projects to enrich descriptions and generate colors
+        projects_list = config.load_projects()
+        projects_map = {p["project_number"]: p for p in projects_list}
+
+        # Generate HSL colors based on project_number hash
+        import hashlib
+
+        def get_project_color(proj_num: str) -> str:
+            if proj_num == "Unclassified":
+                return "#a3a3a3"  # Slate gray
+
+            # Deterministic color from hashing
+            h = hashlib.md5(proj_num.encode("utf-8")).hexdigest()
+            # Convert first 4 bytes of hash to a hue value between 0 and 360
+            hue = int(h[:4], 16) % 360
+            # Premium saturated color palette: saturation 65%, lightness 55%
+            return f"hsl({hue}, 65%, 55%)"
+
+        # 3. Format response matching frontend TypeScript types
+        enriched_projects = []
+        for p_num, bins in data["projects"].items():
+            desc = ""
+            if p_num in projects_map:
+                desc = projects_map[p_num]["description"]
+            elif p_num == "Unclassified":
+                desc = "Activities not mapped to any specific project guidelines"
+
+            # Calculate total duration in range
+            total_dur = sum(b["duration_seconds"] for b in bins)
+
+            enriched_projects.append({
+                "project_number": p_num,
+                "description": desc,
+                "color": get_project_color(p_num),
+                "total_duration_seconds": total_dur,
+                "bins": bins
+            })
+
+        # Sort: Unclassified is always last; other projects sorted by duration descending
+        enriched_projects.sort(key=lambda x: (x["project_number"] == "Unclassified", -x["total_duration_seconds"], x["project_number"]))
+
+        # 4. Generate timestamped labels for column headers
+        timeline_headers = []
+        from datetime import datetime
+        for i in range(data["num_bins"]):
+            bin_time = data["aligned_start"] + i * res_seconds
+            dt = datetime.fromtimestamp(bin_time)
+
+            if resolution in ("1m", "5m", "10m", "15m", "30m"):
+                label = dt.strftime("%H:%M")
+            elif resolution == "1h":
+                label = dt.strftime("%H:%M")
+            elif resolution == "1d":
+                label = dt.strftime("%b %d")
+            elif resolution == "1w":
+                label = dt.strftime("%b %d")
+            elif resolution == "1M":
+                label = dt.strftime("%B")
+            else:
+                label = dt.strftime("%Y-%m-%d %H:%M")
+
+            timeline_headers.append({
+                "timestamp": bin_time,
+                "label": label
+            })
+
+        return {
+            "projects": enriched_projects,
+            "timeline_headers": timeline_headers
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to fetch projects timeline: {e}")
+
+
 @app.get("/api/history")
 def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
     """Get a paginated list of historical screenshot metadata, merging pending items from raw folder and processed ones from LanceDB, alongside monthly timeline groupings."""
