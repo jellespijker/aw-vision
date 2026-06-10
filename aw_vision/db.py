@@ -351,6 +351,81 @@ class VisionDB:
 
         return stats
 
+    def get_binned_timeline(self, start_time: float, end_time: float, resolution_seconds: float) -> dict:
+        """Query and aggregate active screenshot durations binned by resolution_seconds.
+
+        Returns:
+            dict mapping project_number to a list of dicts containing binned times.
+        """
+        try:
+            where_clause = f"timestamp >= {start_time} AND timestamp <= {end_time}"
+            records = self.query_metadata(where_clause, limit=100000)
+        except Exception as e:
+            print(f"Error querying binned timeline metadata: {e}")
+            records = []
+
+        # Align bins to multiples of resolution_seconds
+        aligned_start = (start_time // resolution_seconds) * resolution_seconds
+
+        # Determine number of bins, cap at 5000 for safety
+        if resolution_seconds <= 0:
+            resolution_seconds = 3600.0
+
+        num_bins = int((end_time - aligned_start) // resolution_seconds) + 1
+        if num_bins > 5000:
+            num_bins = 5000
+
+        # Get configured project numbers and Unclassified
+        try:
+            projects_list = config.load_projects()
+            project_numbers = [p["project_number"] for p in projects_list] + ["Unclassified"]
+        except Exception:
+            project_numbers = ["Unclassified"]
+
+        bins_by_project = {p_num: [0.0] * num_bins for p_num in project_numbers}
+        interval_seconds = config.screenshot_interval
+
+        for r in records:
+            # Skip if user was AFK
+            if r.get("is_afk"):
+                continue
+
+            p_num = r.get("project_number")
+            if not p_num or p_num.strip() == "" or p_num.lower() == "none":
+                p_num = "Unclassified"
+
+            ts = r.get("timestamp")
+            if ts < aligned_start:
+                continue
+
+            bin_idx = int((ts - aligned_start) // resolution_seconds)
+            if 0 <= bin_idx < num_bins:
+                if p_num not in bins_by_project:
+                    bins_by_project[p_num] = [0.0] * num_bins
+                bins_by_project[p_num][bin_idx] += interval_seconds
+
+        # Format results for the frontend
+        result = {}
+        for p_num, durations in bins_by_project.items():
+            project_bins = []
+            for idx, dur in enumerate(durations):
+                b_start = aligned_start + idx * resolution_seconds
+                b_end = b_start + resolution_seconds
+                dur_capped = min(dur, resolution_seconds)
+                project_bins.append({
+                    "start_time": b_start,
+                    "end_time": b_end,
+                    "duration_seconds": round(dur_capped, 1)
+                })
+            result[p_num] = project_bins
+
+        return {
+            "aligned_start": aligned_start,
+            "resolution_seconds": resolution_seconds,
+            "num_bins": num_bins,
+            "projects": result
+        }
+
     def get_all_unique_tags(self) -> list[str]:
         """Get all unique tags present in the database."""
         try:
