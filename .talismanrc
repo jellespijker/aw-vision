@@ -10,7 +10,7 @@ fileignoreconfig:
 - filename: AGENTS.md
   checksum: 6519a7c007f975609f1021acef754918212050f78a4e5e8e58e77c50c999565b
 - filename: aw_vision/processor.py
-  checksum: bf78f3be54c5701ee5a8bc9d7e421cd6d51a1ad7942ad4063d7aa805a114aac0
+  checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
   checksum: 629606cde09ebbf0f781dfaa9ad944b641cd03e0e1a72a9b0a66681ce6ce026f
 - filename: frontend/src/App.tsx

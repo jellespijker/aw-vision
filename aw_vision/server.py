@@ -277,6 +277,7 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
                         "project_number": None,
                         "human_labeled": False,
                         "is_processed": False,
+                        "unique_things": None,
                     })
                 except Exception as e:
                     print(f"Error reading pending metadata {meta_path}: {e}")
@@ -317,6 +318,7 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
                 "human_labeled": bool(r.get("human_labeled", False)),
                 "is_processed": True,
                 "distance": r.get("_distance"),  # Only present on semantic searches
+                "unique_things": r.get("unique_things"),
             })
 
         # 3. Filter pending if searching (simple case-insensitive substring match)
@@ -453,6 +455,7 @@ def process_single_screenshot(file_id: str):
             "human_labeled": bool(record.get("human_labeled", False)),
             "is_processed": True,
             "logs": processor.processing_logs.get(file_id, []),
+            "unique_things": record.get("unique_things"),
         }
     except HTTPException:
         raise
@@ -500,7 +503,8 @@ def update_snapshot_label(record_id: str, payload: LabelRequest):
             "status": "success",
             "message": f"Successfully updated project label for snapshot {record_id} to '{proj_num}' (human_labeled=True).",
             "project_number": proj_num,
-            "human_labeled": True
+            "human_labeled": True,
+            "unique_things": updated.get("unique_things") if updated else None
         }
     except Exception as e:
         import traceback
