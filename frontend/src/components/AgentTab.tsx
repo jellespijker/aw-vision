@@ -6,18 +6,15 @@ import {
   Compass,
   ArrowRight,
   RefreshCw,
-  Shield,
   Activity,
   Folder,
-  FileText,
   Maximize2,
-  Cpu,
   CornerDownLeft,
   Paperclip,
   CheckCircle2,
   Terminal
 } from 'lucide-react'
-import { ChatMessage, HistoryRecord, Project } from '../types'
+import type { ChatMessage, HistoryRecord, Project } from '../types'
 
 interface AgentTabProps {
   chatMessages: ChatMessage[]

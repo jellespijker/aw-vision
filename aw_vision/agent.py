@@ -351,12 +351,15 @@ class AgentState(TypedDict):
 
 
 def run_agent_node(state: AgentState) -> AgentState:
-    """Call Ollama and let the agent think or call a tool."""
+    """Call Ollama or Gemini and let the agent think or call a tool."""
+    from aw_vision.settings import settings_store
+    from aw_vision.gemini import run_gemini_chat_agent, is_internet_online
+
     messages = state["messages"]
 
     current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Render messages into a text prompt for Ollama
+    # Render messages into a text prompt for the LLM
     prompt_lines = [
         "You are an advanced agentic productivity assistant integrated with ActivityWatch.",
         f"The current local date and time is: {current_time_str}.",
@@ -399,23 +402,36 @@ def run_agent_node(state: AgentState) -> AgentState:
 
     prompt = "\n".join(prompt_lines)
 
-    try:
-        # Call Ollama API
-        url = f"{config.ollama_host}/api/generate"
-        payload = {
-            "model": config.vision_model,  # Re-use vision_model or any default text model
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.1, "num_ctx": 8192},
-            "keep_alive": 0,
-        }
-        resp = requests.post(url, json=payload, timeout=180.0)
-        if resp.status_code == 200:
-            reply = resp.json().get("response", "").strip()
-        else:
-            reply = f"Error calling Ollama text node: {resp.text}"
-    except Exception as e:
-        reply = f"Error contacting Ollama: {e}"
+    agent_provider = settings_store.get("agent_provider")
+    use_gemini = (agent_provider == "gemini" and is_internet_online())
+
+    if use_gemini:
+        print(f"[Memory Agent] Routing agent reasoning to Gemini using '{settings_store.get('agent_model')}'...")
+        ctx_size = settings_store.get_int("agent_context_size")
+        reply = run_gemini_chat_agent(prompt=prompt, history=[], context_size=ctx_size)
+    else:
+        # Fallback to local Ollama
+        model = settings_store.get("ollama_vision_model") or config.vision_model
+        print(f"[Memory Agent] Routing agent reasoning to Ollama using '{model}'...")
+        try:
+            url = f"{config.ollama_host}/api/generate"
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.1,
+                    "num_ctx": settings_store.get_int("ollama_context_size") or 8192
+                },
+                "keep_alive": 0,
+            }
+            resp = requests.post(url, json=payload, timeout=180.0)
+            if resp.status_code == 200:
+                reply = resp.json().get("response", "").strip()
+            else:
+                reply = f"Error calling Ollama text node: {resp.text}"
+        except Exception as e:
+            reply = f"Error contacting Ollama: {e}"
 
     new_messages = list(messages) + [AIMessage(content=reply)]
 

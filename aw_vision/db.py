@@ -15,6 +15,13 @@ class VisionDB:
         self._db = None
         self._table = None
         self.table_name = "screenshots"
+        self._reembedding_status = {
+            "is_running": False,
+            "total_records": 0,
+            "processed_records": 0,
+            "error": None,
+            "current_model": ""
+        }
 
     @property
     def db(self):
@@ -23,10 +30,18 @@ class VisionDB:
         return self._db
 
     def get_embedding_dimension(self) -> int:
-        """Query Ollama to find the exact embedding dimension for the configured model."""
+        """Query Ollama or return Gemini dimension based on configured settings."""
+        from aw_vision.settings import settings_store
+        provider = settings_store.get("provider")
+        if provider == "gemini":
+            # gemini-embeddings-002 has 3072 dimensions, as approved by the user.
+            return 3072
+
+        # Else, Ollama provider
         try:
             url = f"{config.ollama_host}/api/embeddings"
-            payload = {"model": config.embedding_model, "prompt": "hello", "keep_alive": 0}
+            model = settings_store.get("ollama_embedding_model") or config.embedding_model
+            payload = {"model": model, "prompt": "hello", "keep_alive": 0}
             resp = requests.post(url, json=payload, timeout=15.0)
             if resp.status_code == 200:
                 emb = resp.json().get("embedding", [])
@@ -36,13 +51,12 @@ class VisionDB:
             print(f"Warning: Could not query Ollama to determine embedding size ({e}). Defaulting to 768.")
 
         # Fallback dimensions depending on common models
-        model = config.embedding_model.lower()
+        model = (settings_store.get("ollama_embedding_model") or config.embedding_model).lower()
         if "nomic" in model:
             return 768
         elif "minilm" in model:
             return 384
         elif "gemma" in model:
-            # embeddinggemma is 768
             return 768
         return 768
 
@@ -66,18 +80,118 @@ class VisionDB:
             ]
         )
 
+    def trigger_batch_reembedding(self, force: bool = False):
+        """Trigger an asynchronous, background, database-wide re-embedding migration."""
+        import threading
+        if self._reembedding_status["is_running"]:
+            print("[Re-embedding] Migration is already running. Skipping trigger.")
+            return
+
+        t = threading.Thread(target=self._run_reembedding_migration, args=(force,), daemon=True)
+        t.start()
+
+    def _run_reembedding_migration(self, force: bool = False):
+        import time
+        from aw_vision.settings import settings_store
+        from aw_vision.gemini import generate_gemini_batch_embeddings, is_internet_online
+        import requests
+
+        provider = settings_store.get("provider")
+        model = settings_store.get("gemini_embedding_model") if provider == "gemini" else settings_store.get("ollama_embedding_model")
+
+        print(f"[Re-embedding] Starting database-wide re-embedding migration using {provider} - {model}...")
+
+        self._reembedding_status.update({
+            "is_running": True,
+            "total_records": 0,
+            "processed_records": 0,
+            "error": None,
+            "current_model": f"{provider}:{model}"
+        })
+
+        try:
+            tbl = self.table
+            records = tbl.search().limit(100000).to_list()
+            total = len(records)
+            self._reembedding_status["total_records"] = total
+
+            if total == 0:
+                print("[Re-embedding] No records found in database to re-embed.")
+                self._reembedding_status["is_running"] = False
+                return
+
+            print(f"[Re-embedding] Found {total} records to re-embed.")
+
+            batch_size = 100
+
+            for i in range(0, total, batch_size):
+                # Verify that the provider hasn't changed out from under us
+                current_provider = settings_store.get("provider")
+                current_model = settings_store.get("gemini_embedding_model") if current_provider == "gemini" else settings_store.get("ollama_embedding_model")
+                if f"{current_provider}:{current_model}" != self._reembedding_status["current_model"]:
+                    raise RuntimeError("Provider or model settings changed during migration. Aborting active migration.")
+
+                batch_recs = records[i:i + batch_size]
+
+                # Build texts
+                texts = []
+                for r in batch_recs:
+                    desc = r.get("description") or ""
+                    ocr = r.get("ocr_text") or ""
+                    joint_text = f"Description: {desc}\n\nExtracted Screen Text: {ocr}"
+                    texts.append(joint_text)
+
+                # Generate embeddings
+                new_vectors = []
+                if current_provider == "gemini":
+                    if is_internet_online():
+                        new_vectors = generate_gemini_batch_embeddings(texts)
+                    else:
+                        raise RuntimeError("Network offline during Gemini re-embedding migration.")
+                else:
+                    # Ollama batch embeddings
+                    url = f"{config.ollama_host}/api/embeddings"
+                    for text in texts:
+                        try:
+                            payload = {"model": current_model, "prompt": text, "keep_alive": 0}
+                            resp = requests.post(url, json=payload, timeout=15.0)
+                            if resp.status_code == 200:
+                                new_vectors.append(resp.json().get("embedding", []))
+                            else:
+                                raise RuntimeError(f"Ollama embedding request failed: {resp.status_code}")
+                        except Exception as e:
+                            raise RuntimeError(f"Ollama embedding exception: {e}")
+
+                if len(new_vectors) != len(batch_recs):
+                    raise RuntimeError(f"Embedding generator returned {len(new_vectors)} vectors for {len(batch_recs)} records.")
+
+                # Update records in LanceDB
+                for rec, vec in zip(batch_recs, new_vectors):
+                    tbl.update(where=f"id = '{rec['id']}'", values={"vector": vec})
+
+                self._reembedding_status["processed_records"] += len(batch_recs)
+                print(f"[Re-embedding] Progress: {self._reembedding_status['processed_records']}/{total}")
+                time.sleep(0.5)
+
+            print(f"[Re-embedding] Migration completed successfully. Processed {total} records.")
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"[Re-embedding] Error during re-embedding migration: {e}")
+            self._reembedding_status["error"] = str(e)
+        finally:
+            self._reembedding_status["is_running"] = False
+
     def _migrate_schema_if_needed(self, db_conn, active_dim: Optional[int] = None):
         print("MIGRATION: Evolving LanceDB schema and updating record layouts...")
         try:
             tbl = db_conn.open_table(self.table_name)
-            # 1. Load existing records via Arrow to avoid Pandas NaN float conversion issues
             pyarrow_table = tbl.to_arrow()
             records = pyarrow_table.to_pylist()
 
-            # Determine target dimension
             dim = active_dim if active_dim is not None else self.get_embedding_dimension()
 
-            # 2. Update 'ocr_text', 'human_labeled', 'unique_things', and vector dimension for each record if needed
             for rec in records:
                 if "ocr_text" not in rec:
                     rec["ocr_text"] = None
@@ -86,7 +200,6 @@ class VisionDB:
                 if "unique_things" not in rec:
                     rec["unique_things"] = None
 
-                # Check and normalize vector dimension
                 vec = rec.get("vector")
                 if vec is not None:
                     if len(vec) < dim:
@@ -94,23 +207,21 @@ class VisionDB:
                     elif len(vec) > dim:
                         rec["vector"] = vec[:dim]
 
-            # 3. Drop old table
             db_conn.drop_table(self.table_name)
 
-            # 4. Recreate table with new schema
             evolved_schema = self.get_schema(dim)
             new_tbl = db_conn.create_table(self.table_name, schema=evolved_schema)
 
-            # 5. Load records back
             if records:
                 new_tbl.add(records)
             self._table = new_tbl
             print(f"MIGRATION: Schema successfully migrated to vector size {dim} with {len(records)} existing records preserved.")
+
+            self.trigger_batch_reembedding()
         except Exception as e:
             import traceback
             traceback.print_exc()
             print(f"Error during LanceDB schema migration: {e}")
-            # Fallback to reopen the old table to avoid breaking startup
             self._table = db_conn.open_table(self.table_name)
 
     @property
@@ -121,7 +232,6 @@ class VisionDB:
                 tbl = db_conn.open_table(self.table_name)
                 schema = tbl.schema
 
-                # Get dimensions
                 try:
                     table_dim = schema.field("vector").type.list_size
                 except Exception:
