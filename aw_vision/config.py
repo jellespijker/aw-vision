@@ -13,14 +13,17 @@ DEFAULT_CONFIG = {
     "watcher": {
         "screenshot_interval_seconds": 60,
         "screenshots_dir": "~/.local/share/aw-vision/screenshots",
+        "capture_mode": "both",
     },
     "processing": {
-        "cpu_threshold_percent": 30.0,
-        "memory_threshold_percent": 80.0,
+        "cpu_threshold_percent": 80.0,
+        "memory_threshold_percent": 90.0,
+        "gpu_threshold_percent": 50.0,
         "check_interval_seconds": 10,
         "max_screenshot_lifetime_days": 14,
         "cleanup_interval_hours": 1,
     },
+
     "ollama": {
         "host": "http://localhost:11434",
         "vision_model": "gemma4:e4b-it-qat",
@@ -105,6 +108,10 @@ class Config:
         return p
 
     @property
+    def capture_mode(self) -> str:
+        return self.settings["watcher"].get("capture_mode", "both")
+
+    @property
     def db_dir(self) -> Path:
         p = Path(os.path.expanduser("~/.local/share/aw-vision/db"))
         p.mkdir(parents=True, exist_ok=True)
@@ -117,6 +124,10 @@ class Config:
     @property
     def memory_threshold(self) -> float:
         return float(self.settings["processing"]["memory_threshold_percent"])
+
+    @property
+    def gpu_threshold(self) -> float:
+        return float(self.settings["processing"].get("gpu_threshold_percent", 50.0))
 
     @property
     def check_interval(self) -> int:

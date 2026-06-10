@@ -18,8 +18,8 @@ client = TestClient(app)
 def test_config_defaults():
     """Verify config falls back to safe defaults and expands paths."""
     assert config.screenshot_interval == 60
-    assert config.cpu_threshold == 30.0
-    assert config.memory_threshold == 80.0
+    assert config.cpu_threshold == 80.0
+    assert config.memory_threshold == 90.0
     assert "screenshots" in str(config.screenshots_dir)
 
 
@@ -94,3 +94,106 @@ def test_fastapi_endpoints():
     data = resp.json()
     assert "projects" in data
     assert "raw_stats" in data
+
+
+def test_snapshot_reprocessing(tmp_path):
+    """Test snapshot reprocessing API endpoint and database idempotency."""
+    table = db.table
+    assert table is not None
+
+    test_id = "reprocess-test-uuid-456"
+    try:
+        table.delete(f"id = '{test_id}'")
+    except Exception:
+        pass
+
+    # Create dummy processed image on disk
+    processed_dir = config.screenshots_dir / "processed"
+    processed_dir.mkdir(parents=True, exist_ok=True)
+
+    test_img = processed_dir / f"reprocess_test_{test_id}.png"
+    test_img.write_text("dummy image content")
+
+    dummy_record = {
+        "id": test_id,
+        "timestamp": 123456789.0,
+        "image_path": str(test_img),
+        "window_title": "Reprocess Window Title",
+        "app_name": "ReprocessApp",
+        "is_afk": False,
+        "description": "Reprocess Description",
+        "ocr_text": "Reprocess OCR Text",
+        "tags": ["reprocess", "test"],
+        "project_number": "PRJ-REPROCESS",
+        "vector": [0.2] * db.get_embedding_dimension(),
+    }
+
+    # Test database insert (idempotent overwrite)
+    db.insert_screenshot(dummy_record)
+    # Insert again to verify idempotency delete works without raising errors
+    db.insert_screenshot(dummy_record)
+
+    # Call API to reprocess
+    payload = {
+        "ids": [test_id],
+        "reprocess_ocr": False
+    }
+    resp = client.post("/api/reprocess", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert data["queued_count"] == 1
+    assert data["skipped_count"] == 0
+
+    # Verify that raw folder contains the copied image and the reconstructed JSON file
+    raw_dir = config.screenshots_dir / "raw"
+    copied_img = raw_dir / f"reprocess_test_{test_id}.png"
+    reconstructed_json = raw_dir / f"reprocess_test_{test_id}.json"
+
+    assert copied_img.exists()
+    assert reconstructed_json.exists()
+
+    with open(reconstructed_json, "r") as f:
+        meta = json.load(f)
+    assert meta["id"] == test_id
+    assert meta["ocr_text"] == "Reprocess OCR Text"
+
+    # Clean up files created
+    copied_img.unlink()
+    reconstructed_json.unlink()
+    test_img.unlink()
+    try:
+        table.delete(f"id = '{test_id}'")
+    except Exception:
+        pass
+
+
+def test_summarize_ocr_text():
+    """Verify that summarize_ocr_text correctly cleans and truncates OCR outputs."""
+    from aw_vision.processor import processor
+
+    # Case 1: Empty text
+    assert processor.summarize_ocr_text("") == ""
+    assert processor.summarize_ocr_text(None) == ""
+
+    # Case 2: Clean and filter consecutive redundant lines
+    dirty_text = "Line 1\n\n  \nLine 1\nLine 2\nLine 1\n"
+    # Expected: "Line 1\nLine 2" (because duplicates are filtered globally in seen set)
+    cleaned = processor.summarize_ocr_text(dirty_text)
+    assert "Line 1" in cleaned
+    assert "Line 2" in cleaned
+    # Check that there are no empty lines or whitespace issues
+    lines = [line_str for line_str in cleaned.split("\n") if "truncated" not in line_str]
+    assert len(lines) == 2
+    assert lines[0] == "Line 1"
+    assert lines[1] == "Line 2"
+
+    # Case 3: Truncation behavior
+    long_text = "\n".join([f"This is sentence line {i}" for i in range(100)])
+    max_chars = 200
+    truncated = processor.summarize_ocr_text(long_text, max_chars=max_chars)
+    assert len(truncated) > 0
+    assert "... [OCR Text truncated" in truncated
+    # Check that it ends before max_chars + truncation message
+    content_part = truncated.split("\n... [OCR Text truncated")[0]
+    assert len(content_part) <= max_chars

@@ -30,13 +30,23 @@ class ScreenshotWatcher:
 
         return socket.gethostname()
 
-    def _capture_screenshot_wayland(self, output_path: Path) -> bool:
+    def _capture_screenshot_wayland(self, output_path: Path, mode: str = "active") -> bool:
         """KDE Wayland screenshot capture using spectacle or grim."""
         # Try spectacle (native KDE)
         try:
+            cmd = ["spectacle"]
+            if mode == "active":
+                cmd.append("-a")  # Capture active window
+            elif mode == "fullscreen":
+                cmd.append("-f")  # Capture entire desktop
+            elif mode == "current":
+                cmd.append("-m")  # Capture current monitor
+
             # -b: background/non-interactive, -n: no notification, -o: output file
+            cmd.extend(["-b", "-n", "-o", str(output_path)])
+
             res = subprocess.run(
-                ["spectacle", "-b", "-n", "-o", str(output_path)],
+                cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=10.0,
@@ -46,7 +56,7 @@ class ScreenshotWatcher:
         except Exception:
             pass
 
-        # Try grim (general Wayland tool)
+        # Try grim (general Wayland tool) - falls back to fullscreen
         try:
             res = subprocess.run(
                 ["grim", str(output_path)],
@@ -61,11 +71,12 @@ class ScreenshotWatcher:
 
         return False
 
-    def fetch_active_window_and_afk(self) -> tuple[str, str, bool]:
-        """Query aw-server to get the current window title, app name, and AFK status."""
+    def fetch_active_window_and_afk(self) -> tuple[str, str, bool, dict]:
+        """Query aw-server to get the current window title, app name, AFK status, and extra bucket contexts."""
         window_title = "Unknown"
         app_name = "Unknown"
         is_afk = False
+        bucket_context = {}
 
         try:
             # Fetch buckets to find the correct window and AFK buckets
@@ -105,21 +116,73 @@ class ScreenshotWatcher:
                     if a_resp.status_code == 200:
                         events = a_resp.json()
                         if events:
-                            data = events[0].get("data", {})
-                            is_afk = data.get("status") == "afk"
+                            event = events[0]
+                            data = event.get("data", {})
+                            status = data.get("status")
+                            if status == "afk":
+                                is_afk = True
+                            else:
+                                # Check if the last active heartbeat is stale (older than 3 minutes)
+                                try:
+                                    from datetime import timezone
+                                    ts_str = event.get("timestamp")
+                                    dur = event.get("duration", 0.0)
+
+                                    # Parse RFC3339 timestamp robustly
+                                    if ts_str.endswith("Z"):
+                                        ts_str = ts_str[:-1] + "+00:00"
+                                    if "." in ts_str:
+                                        base, tz = ts_str.split("+")
+                                        main, frac = base.split(".")
+                                        frac = frac[:6]
+                                        ts_str = f"{main}.{frac}+{tz}"
+
+                                    event_time = datetime.fromisoformat(ts_str)
+                                    current_time = datetime.now(timezone.utc)
+
+                                    # Add duration to find the end of the last active event
+                                    from datetime import timedelta
+                                    last_active_end = event_time + timedelta(seconds=dur)
+
+                                    # Default AFK timeout is 3 minutes (180.0 seconds)
+                                    elapsed = (current_time - last_active_end).total_seconds()
+                                    if elapsed > 180.0:
+                                        is_afk = True
+                                        print(f"[{datetime.now()}] Warning: Last active event is stale by {elapsed:.1f}s. Considering user AFK.")
+                                except Exception as err:
+                                    print(f"Error checking AFK event staledness: {err}")
+
+                # Fetch other custom watcher buckets context for extra details (e.g. Chrome, IDE editors)
+                for bid in buckets.keys():
+                    if bid.startswith("aw-watcher-") and not bid.startswith("aw-watcher-afk") and not bid.startswith("aw-watcher-window"):
+                        # Get latest event from this custom bucket
+                        b_resp = requests.get(
+                            f"http://localhost:5600/api/0/buckets/{bid}/events?limit=1",
+                            timeout=1.0,
+                        )
+                        if b_resp.status_code == 200:
+                            events = b_resp.json()
+                            if events:
+                                bucket_context[bid] = events[0].get("data", {})
 
         except Exception as e:
             print(f"Warning: Could not connect to aw-server to gather context ({e})")
 
-        return window_title, app_name, is_afk
+        return window_title, app_name, is_afk, bucket_context
 
     def capture_cycle(self):
         """Main screenshot and context capture iteration."""
         # 1. Gather context first to check if the user is active
-        window_title, app_name, is_afk = self.fetch_active_window_and_afk()
+        window_title, app_name, is_afk, bucket_context = self.fetch_active_window_and_afk()
 
         if is_afk:
-            print(f"[{datetime.now()}] User is AFK. Skipping screenshot capture cycle.")
+            print(f"[{datetime.now()}] User is AFK. Skipping screenshot capture cycle. Triggering bulk processing.")
+            # Trigger asynchronous processing of all pending screenshots
+            try:
+                from aw_vision.processor import processor
+                processor.force_process_all()
+            except Exception as e:
+                print(f"Error auto-triggering bulk processing on AFK: {e}")
             return
 
         timestamp = time.time()
@@ -130,8 +193,19 @@ class ScreenshotWatcher:
         raw_image_path = self.raw_dir / filename
         meta_path = self.raw_dir / f"{int(timestamp)}_{file_id}.json"
 
-        # 2. Capture screen only if user is active
-        success = self._capture_screenshot_wayland(raw_image_path)
+        # 2. Capture screen based on configured capture mode
+        mode = config.capture_mode
+        if mode == "both":
+            # Capture fullscreen as context archive
+            full_filename = f"{int(timestamp)}_{file_id}_full.png"
+            full_path = self.raw_dir / full_filename
+            self._capture_screenshot_wayland(full_path, mode="fullscreen")
+
+            # Capture active window as primary (used for UI and OCR)
+            success = self._capture_screenshot_wayland(raw_image_path, mode="active")
+        else:
+            success = self._capture_screenshot_wayland(raw_image_path, mode=mode)
+
         if not success:
             print(f"[{datetime.now()}] Screenshot capture failed.")
             return
@@ -146,6 +220,7 @@ class ScreenshotWatcher:
             "window_title": window_title,
             "app_name": app_name,
             "is_afk": is_afk,
+            "aw_bucket_context": bucket_context,
         }
         try:
             with open(meta_path, "w", encoding="utf-8") as f:
