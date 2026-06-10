@@ -445,7 +445,7 @@ class BulkProcessor:
                 self.log_step(rec_id, f"Error in Phase 1 (OCR) for {img_path.name}: {e}")
 
         # -------------------------------------------------------------
-        # Phase 2: Vision Analysis Sweep
+        # Phase 2: Vision Analysis Sweep (6-stage sequential multi-prompt pipeline)
         # -------------------------------------------------------------
         for idx, (img_path, meta_path, rec_id, meta) in enumerate(batch_items):
             try:
@@ -455,13 +455,6 @@ class BulkProcessor:
                 if "description" not in meta or meta["description"] is None:
                     full_img_filename = f"{img_path.stem}_full.png"
                     full_img_path = img_path.parent / full_img_filename
-
-                    images_payload = []
-                    if full_img_path.exists():
-                        # Pass focused crop as image 1, and fullscreen desktop as image 2 (context)
-                        images_payload = [str(img_path), str(full_img_path)]
-                    else:
-                        images_payload = [str(img_path)]
 
                     aw_context_str = "None"
                     bucket_context = meta.get("aw_bucket_context", {})
@@ -473,7 +466,6 @@ class BulkProcessor:
                         existing_tags = existing_tags[:100]
 
                     projects_str = json.dumps(projects, indent=2, ensure_ascii=False)
-                    has_dual_images = full_img_path.exists()
 
                     # Fetch temporal neighbor context and app statistics
                     timestamp = float(meta.get("timestamp", time.time()))
@@ -515,114 +507,239 @@ class BulkProcessor:
                     raw_ocr = meta.get("ocr_text", "")
                     truncated_ocr = self.summarize_ocr_text(raw_ocr, max_chars=1200)
 
-                    prompt_text = f"""
-### USER METADATA CONTEXT
-- Active Application: {app_name}
-- Active Window Title: {meta.get('window_title', 'Unknown')}
-- Extracted Focused Screen Text (OCR):
----
-{truncated_ocr}
----
+                    client = ollama.Client(host=config.ollama_host)
 
-### ADDITIONAL ACTIVITYWATCH BUCKET STATES
-These represent other active watcher logs from the user's computer around this timestamp (e.g., active editor files, active browser URLs):
----
-{aw_context_str}
----
+                    stage_keep_alive = 300
+                    final_keep_alive = 0 if (idx == N - 1) else 300
 
-### PROJECT REFERENCE CATALOG
-Below is the list of active work projects you can match against:
+                    # --- Stage 1: Active Window Description ---
+                    active_window_description = "No active window description generated."
+                    try:
+                        self.log_step(rec_id, "Stage 1/6: Analyzing Active Window focused crop...")
+                        prompt_s1 = (
+                            "Describe exactly what window, application document, or active workspace section is open, "
+                            "focusing ONLY on the focused foreground window content. Be highly objective, granular, and precise. "
+                            "Specify filenames, code functions, browser URLs, searched keywords, active spreadsheet columns, or chat messages. "
+                            "Do not explain background context, make generic assumptions, or add conversational filler. "
+                            "Just describe the active focused foreground window elements visible.\n\n"
+                            "You must respond in valid JSON format matching this schema:\n"
+                            '{\n  "active_window_description": "string"\n}'
+                        )
+                        response_s1 = client.chat(
+                            model=config.vision_model,
+                            messages=[{"role": "user", "content": prompt_s1, "images": [str(img_path)]}],
+                            format="json",
+                            options={"temperature": 0.2, "num_ctx": 8192},
+                            keep_alive=stage_keep_alive,
+                        )
+                        raw_s1 = response_s1.get("message", {}).get("content", "")
+                        parsed_s1 = json.loads(raw_s1)
+                        active_window_description = parsed_s1.get("active_window_description", "").strip() or active_window_description
+                        self.log_step(rec_id, f"Stage 1 Complete: {active_window_description[:120]}...")
+                    except Exception as es1:
+                        self.log_step(rec_id, f"Warning: Stage 1 failed: {es1}")
+                        active_window_description = f"Error analyzing active window focused crop: {es1}"
+
+                    # --- Stage 2: Full Desktop Context ---
+                    full_desktop_description = "No fullscreen desktop context available."
+                    if full_img_path.exists():
+                        try:
+                            self.log_step(rec_id, "Stage 2/6: Analyzing Full Desktop Context...")
+                            prompt_s2 = (
+                                "Describe any supplementary or peripheral windows, background apps, desktop workspace layout, "
+                                "or sidebars as supplementary context. Focus only on things OUTSIDE the active focused window. "
+                                "If no other relevant windows or context exist, keep it very brief.\n\n"
+                                "You must respond in valid JSON format matching this schema:\n"
+                                '{\n  "full_desktop_description": "string"\n}'
+                            )
+                            response_s2 = client.chat(
+                                model=config.vision_model,
+                                messages=[{"role": "user", "content": prompt_s2, "images": [str(full_img_path)]}],
+                                format="json",
+                                options={"temperature": 0.2, "num_ctx": 8192},
+                                keep_alive=stage_keep_alive,
+                            )
+                            raw_s2 = response_s2.get("message", {}).get("content", "")
+                            parsed_s2 = json.loads(raw_s2)
+                            full_desktop_description = parsed_s2.get("full_desktop_description", "").strip() or full_desktop_description
+                            self.log_step(rec_id, f"Stage 2 Complete: {full_desktop_description[:120]}...")
+                        except Exception as es2:
+                            self.log_step(rec_id, f"Warning: Stage 2 failed: {es2}")
+                            full_desktop_description = f"Error analyzing full desktop context: {es2}"
+                    else:
+                        self.log_step(rec_id, "Stage 2/6: Skipped (no fullscreen desktop image).")
+
+                    # --- Stage 3: Project Classification ---
+                    project_number = "None"
+                    query_vector = []
+                    try:
+                        self.log_step(rec_id, "Stage 3/6: Retrieving semantic neighbor context & running Project Classification...")
+                        # Compute quick query vector using generated active window description & OCR text
+                        query_text = f"Description: {active_window_description}\n\nExtracted Screen Text:\n{truncated_ocr}"
+                        query_vector = self.get_ollama_embedding(query_text, rec_id=rec_id)
+
+                        # Query historically similar snapshots
+                        similar_snapshots = db.get_similar_labeled_snapshots(
+                            vector=query_vector,
+                            tags=None,
+                            app_name=meta.get("app_name"),
+                            limit=5
+                        )
+                        similar_snapshots_str = json.dumps(similar_snapshots, indent=2, ensure_ascii=False)
+
+                        projects_str = json.dumps(projects, indent=2, ensure_ascii=False)
+
+                        prompt_s3 = f"""
+Compare the following information:
+- Active Window Description: {active_window_description}
+- Full Desktop Description: {full_desktop_description}
+- Extracted Screen Text (OCR): {truncated_ocr}
+- ActivityWatch Bucket State: {aw_context_str}
+- Neighboring Snapshots context: {neighbor_context_str}
+- Historically Similar Snapshots: {similar_snapshots_str}
+- App project statistics: {app_freq_str}
+
+Your task is to classify this activity into one of the following active projects from the Project Reference Catalog:
 {projects_str}
 
-### CHRONOLOGICAL NEIGHBORS & TEMPORAL CONTEXT
-Below are details of the immediately adjacent snapshot recordings (past and future). Use this to maintain temporal coherence across computer activity. If adjacent snapshots are assigned to a certain project (especially if human-verified), prefer to stay on that project context unless there's a clear change in activity.
----
-{neighbor_context_str}
----
+CRITICAL RULES:
+1. Be extremely conservative and precise when matching projects. If there is no strong, explicit, and direct evidence correlating the active screen contents to a project's description/entailment, you MUST output "None".
+2. Do NOT match a project just because the word or name appears in an inactive sidebar chat title, adjacent tab name, or browser bookmark.
+3. Do NOT assume that external company profiles are related to the user's active development projects.
+4. Stay consistent with neighbor contexts and historically similar/human-labeled snapshots if they represent a continuous block of activity on the same application.
 
-### APPLICATION PROJECT HISTORICAL STATISTICS
-Historically, the application '{app_name}' has been mapped to these projects with the following weighted frequencies (higher scores indicate stronger/human-verified correlation):
----
-{app_freq_str}
----
-
-### SCREENSHOT STRUCTURE & PRIORITIES
-"""
-                    if has_dual_images:
-                        prompt_text += """
-You are provided with two screenshots of the user's desktop taken at the exact same moment:
-1. **First Image**: A focused, cropped screenshot of the **Active Window** only.
-2. **Second Image**: A **Fullscreen Desktop** screenshot containing the entire display area (sidebar, background apps, adjacent windows, etc.).
-
-**CRITICAL CRITERIA**:
-- Your primary subject of analysis is the **Active Window** (First Image).
-- The OCR text provided above belongs exclusively to this Active Window (First Image).
-- The Fullscreen Desktop (Second Image) is provided purely as additional context. Any elements in the Fullscreen Desktop (Second Image) that are outside of the Active Window are supplementary or tangent, and may be completely unrelated to the primary task. You must prioritize the Active Window's contents and the OCR text when describing and classifying the work.
-"""
-                    else:
-                        prompt_text += """
-You are provided with a single screenshot of the user's desktop.
-- Analyze the screenshot, the active application metadata, and the OCR text to describe and classify the work.
-"""
-
-                    prompt_text += f"""
-### SYSTEM INSTRUCTIONS & CLASSIFICATION RULES
-You are a highly precise automated time-tracking and productivity classification assistant. Your task is to analyze the user's desktop state and categorize their work.
-
-Follow these strict rules:
-1. **Description Generation**:
-   - Provide a highly detailed, objective, and granular description of the active window and task.
-   - Specify exactly what is being viewed or worked on (e.g., specific file names, code functions, browser URLs, searched keywords, active spreadsheet columns, or chat messages).
-   - If the user is on a website like LinkedIn, GitHub, or Youtube, specify the exact profile, issue, repository, channel, or video being viewed.
-   - Synthesize the OCR text, Active Window/Fullscreen screenshot details, and the Additional ActivityWatch Bucket States (such as the currently open code file or browser URL) to form a cohesive, accurate description of the user's current task.
-   - Do NOT talk about the user's background or general projects unless there is direct evidence of it being the active task on the screen.
-   - Ignore irrelevant sidebar elements like Chrome bookmarks, adjacent browser tabs, or inactive chat lists unless they are the direct subject.
-
-2. **Project Matching**:
-   - Compare the active window content, OCR text, and ActivityWatch bucket states against the PROJECT REFERENCE CATALOG above.
-   - **CRITICAL**: Be extremely conservative and precise when matching projects. If there is no strong, explicit, and direct evidence correlating the active screen contents to a project's description/entailment, you MUST output "None".
-   - Do NOT match a project just because the word or name appears in an inactive sidebar chat title, adjacent tab name, or browser bookmark.
-   - Do NOT assume that external company profiles (like LinkedIn company pages or news articles) are related to the user's active development projects. For example, viewing a generic LinkedIn page should map to "None" or a general management/business category, never a specific local research or R&D project (like NGP Research) unless they are directly editing that project's architecture.
-
-3. **Tag Generation**:
-- Return 3 to 7 highly relevant, technical tags or keywords representing the current task (e.g., ["react", "api-integration", "customer-outreach", "documentation", "system-diagnostic"]).
-- Re-use tags from this list of existing tags whenever possible to keep the database consistent: {existing_tags}
-4. **Temporal Coherence**:
-   - Utilize the CHRONOLOGICAL NEIGHBORS and APPLICATION PROJECT HISTORICAL STATISTICS to guide your categorization.
-   - If the preceding or succeeding snapshots are assigned to a project and the current screenshot shows continuous activity in the same context, you should assign the same project to ensure temporal continuity.
-   - If a human-verified project assignment exists in the neighboring context for the same application, give it strong preference.
-
-You MUST respond in valid JSON format matching the schema below. Do not include any markdown wrapper outside of the JSON output.
-JSON Schema:
+You must respond in valid JSON format matching this schema:
 {{
-  "description": "string",
-  "tags": ["string"],
   "project_number": "string"
 }}
+(Use "None" if no project matches)
 """
+                        # Pure text-based prompt
+                        response_s3 = client.chat(
+                            model=config.vision_model,
+                            messages=[{"role": "user", "content": prompt_s3}],
+                            format="json",
+                            options={"temperature": 0.1, "num_ctx": 8192},
+                            keep_alive=stage_keep_alive,
+                        )
+                        raw_s3 = response_s3.get("message", {}).get("content", "")
+                        parsed_s3 = json.loads(raw_s3)
+                        project_number = parsed_s3.get("project_number", "None").strip() or "None"
+                        self.log_step(rec_id, f"Stage 3 Complete: Matched Project = '{project_number}'")
+                    except Exception as es3:
+                        self.log_step(rec_id, f"Warning: Stage 3 failed: {es3}")
+                        project_number = "None"
 
-                    self.log_step(rec_id, f"Using images for vision analysis: {[os.path.basename(img) for img in images_payload]}")
-                    self.log_step(rec_id, f"Calling vision model '{config.vision_model}'...")
+                    # --- Stage 4: Tag Generation ---
+                    tags = []
+                    try:
+                        self.log_step(rec_id, "Stage 4/6: Generating technical tags...")
+                        prompt_s4 = f"""
+Based on the following desktop screenshot context:
+- Active Window Description: {active_window_description}
+- Full Desktop Description: {full_desktop_description}
+- Extracted Screen Text (OCR): {truncated_ocr}
+- Assigned Project: {project_number}
 
-                    # Keep model loaded during sweep, unload on the very last item of Phase 2
-                    keep_alive = 0 if (idx == N - 1) else 300
+Provide a list of 3 to 7 highly relevant, technical tags or keywords representing this active task (e.g., ["react", "api-integration", "customer-outreach", "documentation", "system-diagnostic"]).
 
-                    client = ollama.Client(host=config.ollama_host)
-                    response = client.chat(
-                        model=config.vision_model,
-                        messages=[{"role": "user", "content": prompt_text, "images": images_payload}],
-                        format="json",
-                        options={"temperature": 0.2, "num_ctx": 8192},
-                        keep_alive=keep_alive,
-                    )
+Prioritize matches with this list of existing tags in the database to maintain consistency: {existing_tags}
 
-                    raw_response = response.get("message", {}).get("content", "")
-                    self.log_step(rec_id, f"Ollama Vision response received (length {len(raw_response)}).")
+You must respond in valid JSON format matching this schema:
+{{
+  "tags": ["string"]
+}}
+"""
+                        # Pure text-based prompt
+                        response_s4 = client.chat(
+                            model=config.vision_model,
+                            messages=[{"role": "user", "content": prompt_s4}],
+                            format="json",
+                            options={"temperature": 0.2, "num_ctx": 8192},
+                            keep_alive=stage_keep_alive,
+                        )
+                        raw_s4 = response_s4.get("message", {}).get("content", "")
+                        parsed_s4 = json.loads(raw_s4)
+                        tags = parsed_s4.get("tags", [])
+                        if not isinstance(tags, list):
+                            tags = []
+                        self.log_step(rec_id, f"Stage 4 Complete: Tags = {tags}")
+                    except Exception as es4:
+                        self.log_step(rec_id, f"Warning: Stage 4 failed: {es4}")
+                        tags = []
 
-                    parsed = json.loads(raw_response)
-                    meta["description"] = parsed.get("description", "No description generated.")
-                    meta["tags"] = parsed.get("tags", [])
-                    meta["project_number"] = parsed.get("project_number", "None")
+                    # --- Stage 5: Work Description Synthesis ---
+                    description = "No description generated."
+                    try:
+                        self.log_step(rec_id, "Stage 5/6: Synthesizing final work description...")
+                        prompt_s5 = f"""
+Synthesize all of the following intermediate details:
+- Active Window Description: {active_window_description}
+- Full Desktop Description: {full_desktop_description}
+- Extracted Screen Text (OCR): {truncated_ocr}
+- ActivityWatch Context: {aw_context_str}
+- Assigned Project: {project_number}
+- Technical Tags: {tags}
+
+Write a highly precise, cohesive 1-3 sentence description summarizing what active work the user was doing. Avoid passive, generic phrasing like "the user is looking at a computer screen" or "working on a project". Instead, write a detailed, active summary (e.g., "Developing the frontend UI for aw-vision, refactoring the list component to display unique elements with exact CSS tokens").
+
+You must respond in valid JSON format matching this schema:
+{{
+  "description": "string"
+}}
+"""
+                        # Pure text-based prompt
+                        response_s5 = client.chat(
+                            model=config.vision_model,
+                            messages=[{"role": "user", "content": prompt_s5}],
+                            format="json",
+                            options={"temperature": 0.2, "num_ctx": 8192},
+                            keep_alive=stage_keep_alive,
+                        )
+                        raw_s5 = response_s5.get("message", {}).get("content", "")
+                        parsed_s5 = json.loads(raw_s5)
+                        description = parsed_s5.get("description", "No description generated.").strip() or description
+                        self.log_step(rec_id, f"Stage 5 Complete: Description = {description}")
+                    except Exception as es5:
+                        self.log_step(rec_id, f"Warning: Stage 5 failed: {es5}")
+                        description = "Error synthesizing work description."
+
+                    # --- Stage 6: Unique Scene Items ---
+                    unique_things = "None detected."
+                    try:
+                        self.log_step(rec_id, "Stage 6/6: Extracting unique elements & tools...")
+                        prompt_s6 = (
+                            "Analyze both the Active Window (First Image) and Fullscreen Desktop (Second Image) screenshots. "
+                            "Identify and describe any unique elements, files, specialized widgets, terminal commands, active code blocks, "
+                            "or specific tools present on the screen. Summarize these items as a clear bulleted list or a concise descriptive string.\n\n"
+                            "You must respond in valid JSON format matching this schema:\n"
+                            '{\n  "unique_things": "string"\n}'
+                        )
+                        images_s6 = [str(img_path)]
+                        if full_img_path.exists():
+                            images_s6.append(str(full_img_path))
+
+                        response_s6 = client.chat(
+                            model=config.vision_model,
+                            messages=[{"role": "user", "content": prompt_s6, "images": images_s6}],
+                            format="json",
+                            options={"temperature": 0.2, "num_ctx": 8192},
+                            keep_alive=final_keep_alive,
+                        )
+                        raw_s6 = response_s6.get("message", {}).get("content", "")
+                        parsed_s6 = json.loads(raw_s6)
+                        unique_things = parsed_s6.get("unique_things", "").strip() or unique_things
+                        self.log_step(rec_id, "Stage 6 Complete: Unique elements detected.")
+                    except Exception as es6:
+                        self.log_step(rec_id, f"Warning: Stage 6 failed: {es6}")
+                        unique_things = "Error detecting unique elements."
+
+                    # Assign results to meta dictionary
+                    meta["description"] = description
+                    meta["tags"] = tags
+                    meta["project_number"] = project_number
+                    meta["unique_things"] = unique_things
+                    meta["vector"] = query_vector
 
                     # Persist results to metadata JSON file on disk
                     with open(meta_path, "w", encoding="utf-8") as f:
@@ -652,21 +769,23 @@ JSON Schema:
                 if project_number == "None":
                     project_number = None
 
-                self.log_step(rec_id, f"Generating semantic embedding (1024-dim joint vector) using '{config.embedding_model}'...")
-                embedding_text = f"Description: {description}\n\nExtracted Screen Text:\n{ocr_text}"
+                embedding = meta.get("vector")
+                if not embedding or len(embedding) == 0:
+                    self.log_step(rec_id, f"Generating semantic embedding (1024-dim joint vector) using '{config.embedding_model}'...")
+                    embedding_text = f"Description: {description}\n\nExtracted Screen Text:\n{ocr_text}"
 
-                # Keep embedding model loaded during the sweep, unload on the very last item of Phase 3
-                keep_alive = 0 if (idx == N - 1) else 300
+                    # Keep embedding model loaded during the sweep, unload on the very last item of Phase 3
+                    keep_alive = 0 if (idx == N - 1) else 300
 
-                embedding = []
-                try:
-                    url = f"{config.ollama_host}/api/embeddings"
-                    payload = {"model": config.embedding_model, "prompt": embedding_text, "keep_alive": keep_alive}
-                    resp = requests.post(url, json=payload, timeout=30.0)
-                    if resp.status_code == 200:
-                        embedding = resp.json().get("embedding", [])
-                except Exception as ee:
-                    self.log_step(rec_id, f"Error generating embedding from Ollama: {ee}")
+                    embedding = []
+                    try:
+                        url = f"{config.ollama_host}/api/embeddings"
+                        payload = {"model": config.embedding_model, "prompt": embedding_text, "keep_alive": keep_alive}
+                        resp = requests.post(url, json=payload, timeout=30.0)
+                        if resp.status_code == 200:
+                            embedding = resp.json().get("embedding", [])
+                    except Exception as ee:
+                        self.log_step(rec_id, f"Error generating embedding from Ollama: {ee}")
 
                 if not embedding:
                     dim = db.get_embedding_dimension()
@@ -685,6 +804,7 @@ JSON Schema:
                     "tags": tags,
                     "project_number": project_number,
                     "human_labeled": False,
+                    "unique_things": meta.get("unique_things"),
                     "vector": embedding,
                 }
 

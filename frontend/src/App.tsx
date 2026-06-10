@@ -38,7 +38,8 @@ import {
   Sun,
   Moon,
   Compass,
-  ArrowRight
+  ArrowRight,
+  Sparkles
 } from 'lucide-react'
 
 // Define interfaces for TypeScript safety
@@ -82,6 +83,7 @@ interface HistoryRecord {
   distance?: number
   is_processed?: boolean
   human_labeled?: boolean
+  unique_things?: string | null
 }
 
 interface Project {
@@ -639,7 +641,8 @@ export default function App() {
                     description: 'Direct screenshot citation from conversational agent response.',
                     ocr_text: null,
                     tags: [],
-                    project_number: null
+                    project_number: null,
+                    unique_things: null
                   }
                   openImageLightbox(rec)
                 }}
@@ -1260,6 +1263,21 @@ export default function App() {
                               {rec.description}
                             </p>
 
+                            {/* Unique Scene Elements & Tools Inline Badges */}
+                            {rec.is_processed && rec.unique_things && (
+                              <div className="flex flex-wrap gap-1 mt-2 mb-1">
+                                {rec.unique_things.split('\n')
+                                  .map(line => line.replace(/^[-\*\s•\d\.]+\s*/, '').trim())
+                                  .filter(line => line.length > 0)
+                                  .slice(0, 3)
+                                  .map((thing, idx) => (
+                                    <span key={idx} className="text-[10px] font-medium bg-surface-container-low border border-surface-container-high text-text-secondary px-1.5 py-0.5 rounded truncate max-w-[150px]" title={thing}>
+                                      {thing}
+                                    </span>
+                                  ))}
+                              </div>
+                            )}
+
                             {/* OCR snippet if present (Technical monospace font) */}
                             {rec.is_processed && rec.ocr_text && (
                               <div className="mt-3 bg-surface-container-low p-2.5 rounded border border-surface-container-high">
@@ -1560,6 +1578,26 @@ export default function App() {
                   <h4 className="font-semibold text-headline-sm leading-tight">{selectedRecord.window_title}</h4>
                   <p className="text-text-secondary text-body-sm leading-relaxed">{selectedRecord.description}</p>
                 </div>
+
+                {/* Unique Scene Elements & Tools */}
+                {selectedRecord.is_processed && selectedRecord.unique_things && (
+                  <div className="bg-surface-container-low p-4 rounded border border-surface-container-high space-y-2">
+                    <h5 className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary flex items-center gap-1.5 font-messina">
+                      <Sparkles className="w-4 h-4 text-primary-container" /> Unique Scene Elements &amp; Tools
+                    </h5>
+                    <div className="bg-white border border-surface-container p-3 rounded space-y-1.5 max-h-48 overflow-y-auto text-left">
+                      {selectedRecord.unique_things.split('\n')
+                        .map(line => line.replace(/^[-\*\s•\d\.]+\s*/, '').trim())
+                        .filter(line => line.length > 0)
+                        .map((thing, idx) => (
+                          <div key={idx} className="flex items-start gap-2 text-body-sm text-neutral-dark font-medium">
+                            <span className="w-1.5 h-1.5 bg-primary-container rounded-full mt-1.5 flex-shrink-0"></span>
+                            <span>{thing}</span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Lightbox full OCR text preview (IBM Plex Mono) */}
                 {selectedRecord.ocr_text && (

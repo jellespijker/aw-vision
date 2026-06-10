@@ -61,6 +61,7 @@ class VisionDB:
                 pa.field("tags", pa.list_(pa.string()), nullable=True),
                 pa.field("project_number", pa.string(), nullable=True),
                 pa.field("human_labeled", pa.bool_(), nullable=True),
+                pa.field("unique_things", pa.string(), nullable=True),
                 pa.field("vector", pa.list_(pa.float32(), dim), nullable=False),
             ]
         )
@@ -76,12 +77,14 @@ class VisionDB:
             # Determine target dimension
             dim = active_dim if active_dim is not None else self.get_embedding_dimension()
 
-            # 2. Update 'ocr_text', 'human_labeled', and vector dimension for each record if needed
+            # 2. Update 'ocr_text', 'human_labeled', 'unique_things', and vector dimension for each record if needed
             for rec in records:
                 if "ocr_text" not in rec:
                     rec["ocr_text"] = None
                 if "human_labeled" not in rec:
                     rec["human_labeled"] = False
+                if "unique_things" not in rec:
+                    rec["unique_things"] = None
 
                 # Check and normalize vector dimension
                 vec = rec.get("vector")
@@ -126,7 +129,12 @@ class VisionDB:
 
                 active_dim = self.get_embedding_dimension()
 
-                if "ocr_text" not in schema.names or "human_labeled" not in schema.names or table_dim != active_dim:
+                if (
+                    "ocr_text" not in schema.names
+                    or "human_labeled" not in schema.names
+                    or "unique_things" not in schema.names
+                    or table_dim != active_dim
+                ):
                     self._migrate_schema_if_needed(db_conn, active_dim=active_dim)
                 else:
                     self._table = tbl
