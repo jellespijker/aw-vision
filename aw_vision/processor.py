@@ -264,12 +264,12 @@ class BulkProcessor:
         import socket
         try:
             hostname = socket.gethostname()
-            bucket_id = f"aw-vision-processed_{hostname}"
+            bucket_id = f"aw-watcher-vision_{hostname}"
 
             # Ensure bucket exists (aw-server handles 304 or 200)
             url_create = f"http://localhost:5600/api/0/buckets/{bucket_id}"
             create_payload = {
-                "client": "aw-vision",
+                "client": "aw-watcher-vision",
                 "type": "vision-processed",
                 "hostname": hostname
             }

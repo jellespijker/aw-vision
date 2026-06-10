@@ -154,7 +154,7 @@ class ScreenshotWatcher:
 
                 # Fetch other custom watcher buckets context for extra details (e.g. Chrome, IDE editors)
                 for bid in buckets.keys():
-                    if bid.startswith("aw-watcher-") and not bid.startswith("aw-watcher-afk") and not bid.startswith("aw-watcher-window"):
+                    if bid.startswith("aw-watcher-") and not bid.startswith("aw-watcher-afk") and not bid.startswith("aw-watcher-window") and not bid.startswith("aw-watcher-vision"):
                         # Get latest event from this custom bucket
                         b_resp = requests.get(
                             f"http://localhost:5600/api/0/buckets/{bid}/events?limit=1",
