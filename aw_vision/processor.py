@@ -20,6 +20,7 @@ class BulkProcessor:
         self.raw_dir = config.screenshots_dir / "raw"
         self.processed_dir = config.screenshots_dir / "processed"
         self.running = False
+        self.is_processing = False
         self.thread = None
         self.lock = threading.Lock()
         self.processing_ids = set()
@@ -372,7 +373,23 @@ class BulkProcessor:
 
     def process_batch(self, queue: list[tuple[Path, Path]], projects: list) -> bool:
         """Process a list of raw screenshot and metadata tuples sequentially in distinct stages to limit Ollama model load/unload cycles."""
+        with self.lock:
+            if self.is_processing:
+                print(f"[{datetime.now()}] [BulkProcessor] A batch processing run is already active. Skipping.")
+                return False
+            self.is_processing = True
+
         batch_items = []
+        try:
+            return self._process_batch_impl(queue, projects, batch_items)
+        finally:
+            with self.lock:
+                self.is_processing = False
+                for item in batch_items:
+                    rec_id = item[2]
+                    self.processing_ids.discard(rec_id)
+
+    def _process_batch_impl(self, queue: list[tuple[Path, Path]], projects: list, batch_items: list) -> bool:
         with self.lock:
             for img_path, meta_path in queue:
                 if not meta_path.exists() or not img_path.exists():
@@ -713,11 +730,6 @@ JSON Schema:
                     print(f"Error saving raw log file: {le}")
                 traceback.print_exc()
 
-        # Clean up processing_ids
-        with self.lock:
-            for _, _, rec_id, _ in batch_items:
-                self.processing_ids.discard(rec_id)
-
         return success_count > 0
 
     def process_screenshot(self, img_path: Path, meta_path: Path, projects: list) -> bool:
@@ -726,6 +738,11 @@ JSON Schema:
 
     def force_process_all(self):
         """Force process all pending items immediately in an optimized background batch thread."""
+        with self.lock:
+            if self.is_processing:
+                print(f"[{datetime.now()}] [BulkProcessor] A batch processing run is already active. Skipping force_process_all.")
+                return
+
         def run_force():
             print(f"[{datetime.now()}] Force processing all starting...")
             try:
@@ -754,19 +771,26 @@ JSON Schema:
                     self.run_retention_cleanup()
                     last_cleanup_time = now
 
-                queue = self.get_pending_queue()
-                if queue:
-                    print(f"Pending screenshots in queue: {len(queue)}")
-                    # Check if system is idle before running heavy Ollama jobs
-                    if self.is_system_idle():
-                        projects = config.load_projects()
-                        # Process the entire queue as an optimized batch!
-                        self.process_batch(queue, projects)
-                    else:
-                        print("System is busy (not idle). Postponing screenshot processing.")
-                else:
-                    # No pending files, we're fully caught up
+                with self.lock:
+                    is_proc = self.is_processing
+
+                if is_proc:
+                    # Already processing, skip this loop iteration
                     pass
+                else:
+                    queue = self.get_pending_queue()
+                    if queue:
+                        print(f"Pending screenshots in queue: {len(queue)}")
+                        # Check if system is idle before running heavy Ollama jobs
+                        if self.is_system_idle():
+                            projects = config.load_projects()
+                            # Process the entire queue as an optimized batch!
+                            self.process_batch(queue, projects)
+                        else:
+                            print("System is busy (not idle). Postponing screenshot processing.")
+                    else:
+                        # No pending files, we're fully caught up
+                        pass
             except Exception as e:
                 print(f"Error in processor loop: {e}")
 

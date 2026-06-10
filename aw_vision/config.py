@@ -17,7 +17,7 @@ DEFAULT_CONFIG = {
     },
     "processing": {
         "cpu_threshold_percent": 80.0,
-        "memory_threshold_percent": 80.0,
+        "memory_threshold_percent": 90.0,
         "gpu_threshold_percent": 50.0,
         "check_interval_seconds": 10,
         "max_screenshot_lifetime_days": 14,
