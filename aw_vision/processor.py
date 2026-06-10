@@ -422,6 +422,8 @@ class BulkProcessor:
                         continue
                     self.processing_ids.add(rec_id)
                     batch_items.append((img_path, meta_path, rec_id, meta))
+                    if len(batch_items) >= 20:  # Cap single batch sweep to 20 items to avoid OOM
+                        break
                 except Exception as e:
                     print(f"Error reading metadata during batch filter for {meta_path}: {e}")
                     continue
