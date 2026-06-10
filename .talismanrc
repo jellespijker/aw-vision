@@ -25,4 +25,6 @@ fileignoreconfig:
   checksum: 76e79bb0c1d30be10d3a750690b71e6a95bcd11ea1b283d9c8ffefc0198cb9c6
 - filename: frontend/src/components/AgentTab.tsx
   checksum: 23a2a4bff3ca8741c69bf6c7d6171665700be3280c0007f673a17c59e5d58388
+- filename: aw_vision/agent.py
+  checksum: 4d9d9bf55ce213b5331e7d545d1827c3ae1544de9a7ab3e8e4a090c556156e62
 version: ""

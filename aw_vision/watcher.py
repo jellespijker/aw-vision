@@ -180,7 +180,10 @@ class ScreenshotWatcher:
             # Trigger asynchronous processing of all pending screenshots
             try:
                 from aw_vision.processor import processor
-                processor.force_process_all()
+                if processor.is_system_idle():
+                    processor.force_process_all()
+                else:
+                    print(f"[{datetime.now()}] System resources busy. Skipping automatic bulk processing during AFK.")
             except Exception as e:
                 print(f"Error auto-triggering bulk processing on AFK: {e}")
             return
