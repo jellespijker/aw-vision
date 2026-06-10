@@ -1,9 +1,9 @@
 import React from 'react'
-import { Bot, Image as ImageIcon, FileText, Activity } from 'lucide-react'
+import { Bot, Image as ImageIcon, FileText, Activity, Settings } from 'lucide-react'
 
 interface TabsProps {
-  activeTab: 'chat' | 'gallery' | 'projects' | 'pipeline'
-  setActiveTab: (tab: 'chat' | 'gallery' | 'projects' | 'pipeline') => void
+  activeTab: 'chat' | 'gallery' | 'projects' | 'pipeline' | 'settings'
+  setActiveTab: (tab: 'chat' | 'gallery' | 'projects' | 'pipeline' | 'settings') => void
   totalCount: number
 }
 
@@ -56,6 +56,18 @@ export const Tabs: React.FC<TabsProps> = ({ activeTab, setActiveTab, totalCount 
         }`}
       >
         <Activity className="w-4 h-4" /> System Pipeline
+      </button>
+
+      <button
+        id="tab-settings"
+        onClick={() => setActiveTab('settings')}
+        className={`h-10 px-5 text-action-md font-medium rounded-t transition-all border-b-2 flex items-center gap-2 font-messina shrink-0 cursor-pointer ${
+          activeTab === 'settings'
+            ? 'border-primary text-primary bg-surface-container-lowest'
+            : 'border-transparent text-text-secondary hover:text-neutral-dark hover:bg-surface-container-low'
+        }`}
+      >
+        <Settings className="w-4 h-4" /> Settings
       </button>
     </div>
   )

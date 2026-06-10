@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import { EyeOff, RefreshCw } from 'lucide-react'
 
-import { DaemonStatus, HistoryRecord, Project, ChatMessage, TimelineEntry } from './types'
+import type { DaemonStatus, HistoryRecord, Project, ChatMessage, TimelineEntry } from './types'
 import { NotificationToast } from './components/NotificationToast'
 import { Header } from './components/Header'
 import { Tabs } from './components/Tabs'
@@ -10,6 +10,7 @@ import { AgentTab } from './components/AgentTab'
 import { GalleryTab } from './components/GalleryTab'
 import { ProjectsTab } from './components/ProjectsTab'
 import { PipelineTab } from './components/PipelineTab'
+import { SettingsTab } from './components/SettingsTab'
 import { LightboxModal } from './components/LightboxModal'
 
 const getApiBase = (): string => {
@@ -28,7 +29,8 @@ axios.defaults.baseURL = API_BASE
 export default function App() {
   // Theme and Tab States
   const [darkMode, setDarkMode] = useState<boolean>(false)
-  const [activeTab, setActiveTab] = useState<'chat' | 'gallery' | 'projects' | 'pipeline'>('chat')
+  const [activeTab, setActiveTab] = useState<'chat' | 'gallery' | 'projects' | 'pipeline' | 'settings'>('chat')
+
 
   // API and Connection States
   const [serverOnline, setServerOnline] = useState<boolean>(true)
@@ -109,6 +111,48 @@ export default function App() {
     }
   }, [status])
 
+  const prevPendingSize = useRef<number | null>(null)
+  const prevProcessedSize = useRef<number | null>(null)
+
+  const fetchNewHistory = async () => {
+    if (!serverOnline) return
+    try {
+      const q = searchQuery
+      let url = `/api/history?page=1&limit=${pageSize}`
+      if (q && q.trim()) {
+        url += `&search=${encodeURIComponent(q.trim())}`
+      }
+      const resp = await axios.get(url)
+      const latestItems = resp.data.items || []
+
+      setHistoryRecords((prev) => {
+        const existingIds = new Set(prev.map((item) => item.id))
+        const newItems = latestItems.filter((item: HistoryRecord) => !existingIds.has(item.id))
+        if (newItems.length === 0) return prev
+        return [...newItems, ...prev]
+      })
+
+      setTotalCount(resp.data.total || 0)
+      setTotalPages(resp.data.total_pages || 1)
+    } catch (e) {
+      console.error('Error fetching new history', e)
+    }
+  }
+
+  useEffect(() => {
+    if (status) {
+      const pendingChanged = prevPendingSize.current !== null && status.pending_queue_size !== prevPendingSize.current
+      const processedChanged = prevProcessedSize.current !== null && status.processed_database_size !== prevProcessedSize.current
+
+      if (pendingChanged || processedChanged) {
+        fetchNewHistory()
+      }
+
+      prevPendingSize.current = status.pending_queue_size
+      prevProcessedSize.current = status.processed_database_size
+    }
+  }, [status])
+
   // Automatically update the active Lightbox record when the gallery history refreshes
   useEffect(() => {
     if (selectedRecord && historyRecords.length > 0) {
@@ -174,6 +218,34 @@ export default function App() {
       setTimelineEntries(resp.data.timeline || [])
     } catch (e) {
       console.error('Error loading screenshot history', e)
+    } finally {
+      setLoadingHistory(false)
+    }
+  }
+
+  const loadMoreHistory = async () => {
+    if (!serverOnline || loadingHistory || currentPage >= totalPages) return
+    setLoadingHistory(true)
+    try {
+      const nextPage = currentPage + 1
+      const q = searchQuery
+      let url = `/api/history?page=${nextPage}&limit=${pageSize}`
+      if (q && q.trim()) {
+        url += `&search=${encodeURIComponent(q.trim())}`
+      }
+      const resp = await axios.get(url)
+      const newItems = resp.data.items || []
+
+      setHistoryRecords((prev) => {
+        const existingIds = new Set(prev.map((item) => item.id))
+        const filteredNew = newItems.filter((item: HistoryRecord) => !existingIds.has(item.id))
+        return [...prev, ...filteredNew]
+      })
+
+      setCurrentPage(resp.data.page || nextPage)
+      setTotalPages(resp.data.total_pages || 1)
+    } catch (e) {
+      console.error('Error loading more history', e)
     } finally {
       setLoadingHistory(false)
     }
@@ -553,7 +625,7 @@ export default function App() {
                 />
               )}
 
-              {/* TAB 2: SCREENSHOT LIBRARY & SEARCH */}
+                            {/* TAB 2: SCREENSHOT LIBRARY & SEARCH */}
               {activeTab === 'gallery' && (
                 <GalleryTab
                   status={status}
@@ -579,6 +651,9 @@ export default function App() {
                   getPageRange={getPageRange}
                   expandedOcrCardId={expandedOcrCardId}
                   setExpandedOcrCardId={setExpandedOcrCardId}
+                  hasMore={currentPage < totalPages}
+                  loadMore={loadMoreHistory}
+                  totalCount={totalCount}
                 />
               )}
 
@@ -607,9 +682,19 @@ export default function App() {
                   handleBulkReprocessSidebar={handleBulkReprocessSidebar}
                 />
               )}
+
+              {/* TAB 5: AI & SYSTEM SETTINGS */}
+              {activeTab === 'settings' && (
+                <SettingsTab
+                  showNotification={(text, type) => {
+                    setToastMessage({ text, type })
+                  }}
+                />
+              )}
             </main>
           </>
         )}
+
 
         {/* Lightbox Screenshot Overlay Modal */}
         <LightboxModal

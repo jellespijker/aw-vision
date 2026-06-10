@@ -12,13 +12,13 @@ fileignoreconfig:
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
-  checksum: 629606cde09ebbf0f781dfaa9ad944b641cd03e0e1a72a9b0a66681ce6ce026f
+  checksum: 5f8f991b2bb5210471d71ef2a3425d57848aef76af3c8e995a73332b5b8b1763
 - filename: frontend/src/App.tsx
   checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
 - filename: frontend/src/components/ProjectsTab.tsx
   checksum: a3b736362c200f11b0419c5c773e5d5ae7d1fcc1120c5c38aa1c7a83cf79c882
 - filename: frontend/src/components/ScreenshotCarousel.tsx
-  checksum: c1f77c3055c7c53fafaba7b5d8e8ba8840473e348eea1b4730f86e7e043b11db
+  checksum: 2862c5828093c1da23a148b46672ded6e2b9b5038669c13747fa520e58cacc7e
 - filename: frontend/src/components/LightboxModal.tsx
   checksum: 7959bd3424ded5b73854d169d815b0c48a6a7aeffd8dcd59f43089077a520019
 - filename: frontend/src/components/GalleryTab.tsx
@@ -27,4 +27,10 @@ fileignoreconfig:
   checksum: 23a2a4bff3ca8741c69bf6c7d6171665700be3280c0007f673a17c59e5d58388
 - filename: aw_vision/agent.py
   checksum: 4d9d9bf55ce213b5331e7d545d1827c3ae1544de9a7ab3e8e4a090c556156e62
+- filename: aw_vision/settings.py
+  checksum: 2cf270c607a0b022f5acf927562b72095a45131f08ca27aa267674403f17a051
+- filename: aw_vision/gemini.py
+  checksum: 0dc61001d93f9a79b1d88973f02e4f43056563cfc8f791f4f8dea6c8d9ccabd1
+- filename: frontend/src/components/SettingsTab.tsx
+  checksum: b3a1f6c6f0b0d37f2fac05c9029f184cc048a0d0ec5d32801f0ceee11d59b04b
 version: ""

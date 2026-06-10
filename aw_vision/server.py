@@ -79,6 +79,14 @@ class ReprocessRequest(BaseModel):
     all: bool = False
 
 
+class SettingsUpdateRequest(BaseModel):
+    settings: dict
+
+
+class TestKeyRequest(BaseModel):
+    api_key: str
+
+
 # ---------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------
@@ -681,7 +689,107 @@ def reprocess_snapshots(payload: ReprocessRequest):
         raise HTTPException(status_code=500, detail=f"Failed to initiate snapshot reprocessing: {e}")
 
 
+# ---------------------------------------------------------
+# Settings Endpoints
+# ---------------------------------------------------------
+
+
+@app.get("/api/settings")
+def get_settings():
+    """Retrieve all current system settings with sensitive values masked."""
+    from aw_vision.settings import settings_store
+    return settings_store.get_all_masked()
+
+
+@app.post("/api/settings")
+def update_settings(payload: SettingsUpdateRequest):
+    """Save updated system settings and trigger background migrations if model or provider changes."""
+    from aw_vision.settings import settings_store
+    from aw_vision.db import db
+
+    old_provider = settings_store.get("provider")
+    old_ollama_emb = settings_store.get("ollama_embedding_model")
+    old_gemini_emb = settings_store.get("gemini_embedding_model")
+
+    new_settings = payload.settings
+    new_provider = new_settings.get("provider", old_provider)
+    new_ollama_emb = new_settings.get("ollama_embedding_model", old_ollama_emb)
+    new_gemini_emb = new_settings.get("gemini_embedding_model", old_gemini_emb)
+
+    provider_changed = (old_provider != new_provider)
+    embedding_model_changed = False
+
+    if new_provider == "gemini":
+        if old_gemini_emb != new_gemini_emb:
+            embedding_model_changed = True
+    else:
+        if old_ollama_emb != new_ollama_emb:
+            embedding_model_changed = True
+
+    # Persist setting values
+    for k, v in new_settings.items():
+        if k == "gemini_api_key" and v == "••••••••":
+            # Retain the existing key, don't overwrite with mask
+            continue
+        settings_store.set(k, v)
+
+    # Force reloading and schema update/re-embedding if needed
+    settings_store.load_all()
+
+    if provider_changed or embedding_model_changed:
+        print("[Settings API] Provider or embedding model changed. Checking database schema and triggering re-embedding...")
+        db._table = None  # Force database reference reload
+        _ = db.table      # Accessing the table property will auto-migrate schema if dimensions changed
+
+        # If schema migration wasn't triggered automatically, start re-embedding manually
+        if not db._reembedding_status["is_running"]:
+            db.trigger_batch_reembedding()
+
+    return {"status": "success", "settings": settings_store.get_all_masked()}
+
+
+@app.get("/api/settings/models")
+def get_gemini_models(api_key: Optional[str] = None):
+    """Retrieve available generative Gemini models, optionally verifying with a temporary key."""
+    from aw_vision.gemini import query_gemini_models
+    models = query_gemini_models(api_key=api_key)
+    return {"models": models}
+
+
+@app.post("/api/settings/test")
+def test_gemini_key(payload: TestKeyRequest):
+    """Test connection and validate a provided Gemini API Key against Google's servers."""
+    import requests
+    api_key = payload.api_key
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API Key is required.")
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    try:
+        resp = requests.get(url, timeout=10.0)
+        if resp.status_code == 200:
+            return {"status": "success", "message": "API Key is valid. Connection successful."}
+        else:
+            try:
+                err_msg = resp.json().get("error", {}).get("message", resp.text)
+            except Exception:
+                err_msg = resp.text
+            raise HTTPException(status_code=400, detail=f"Validation failed (HTTP {resp.status_code}): {err_msg}")
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=400, detail=f"Network error connecting to Gemini API: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/settings/reembed-status")
+def get_reembed_status():
+    """Retrieve status of any active database-wide embedding recalculation."""
+    from aw_vision.db import db
+    return db._reembedding_status
+
+
 # Serve compiled static React files in production/standalone mode
+
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 
 if frontend_dist.exists():
