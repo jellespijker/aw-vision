@@ -39,10 +39,10 @@ interface ReembedStatus {
 export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) => {
   // Settings state
   const [settings, setSettings] = useState<Record<string, any>>({
-    provider: 'ollama',
+    provider: 'gemini',
     gemini_api_key: '',
-    gemini_llm_model: 'gemini-2.0-flash',
-    gemini_embedding_model: 'gemini-embeddings-002',
+    gemini_llm_model: 'gemma-4-26b-a4b-it',
+    gemini_embedding_model: 'gemini-embedding-002',
     gemini_context_size: 1048576,
     gemini_rate_limit_delay: 4.0,
     ollama_vision_model: 'gemma4:e2b-it-qat',
@@ -202,10 +202,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
   const forceTriggerReembedding = async () => {
     if (window.confirm('Are you sure you want to force recalculate all semantic embeddings in the database? This may take some time depending on your database size.')) {
       try {
-        // Saving settings triggers a check, but we can also trigger manually by pushing provider/model settings again
-        const resp = await axios.post('/api/settings', { settings })
-        setSettings(resp.data.settings)
-        showNotification('Background re-embedding recalculation initiated.', 'success')
+        const resp = await axios.post('/api/settings/reembed')
+        showNotification(resp.data.message || 'Background re-embedding recalculation initiated.', 'success')
         setTimeout(fetchReembedStatus, 500)
       } catch (e: any) {
         showNotification('Failed to trigger database re-embedding.', 'danger')
@@ -230,7 +228,29 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
   // Pre-determined local model lists for dropdowns
   const ollamaVisions = ['gemma4:e2b-it-qat', 'llama3.2-vision', 'phi3:vision', 'minicpm-v']
   const ollamaEmbeddings = ['embeddinggemma', 'nomic-embed-text', 'all-minilm']
-  const geminiEmbeddings = ['gemini-embeddings-002', 'text-embedding-004']
+  const geminiEmbeddings = ['gemini-embedding-002', 'gemini-embeddings-002', 'text-embedding-004']
+
+  // Merge custom models with fetched models, ensuring no duplicates
+  const getLlmOptions = () => {
+    const customModels = [
+      { id: 'gemma-4-26b-a4b-it', display_name: 'Gemma 4 26B A4B IT (Recommended)' },
+      { id: 'gemma-4-31b-it', display_name: 'Gemma 4 31B IT' },
+      { id: 'gemini-2.5-flash', display_name: 'Gemini 2.5 Flash' },
+      { id: 'gemini-2.0-flash', display_name: 'Gemini 2.0 Flash' },
+      { id: 'gemini-1.5-pro', display_name: 'Gemini 1.5 Pro' }
+    ]
+
+    const combined = [...customModels]
+    geminiModels.forEach(m => {
+      if (!combined.some(c => c.id === m.id)) {
+        combined.push({
+          id: m.id,
+          display_name: m.display_name
+        })
+      }
+    })
+    return combined
+  }
 
   return (
     <div className="font-sans space-y-6">
@@ -463,20 +483,11 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
                     onChange={(e) => handleSettingChange('gemini_llm_model', e.target.value)}
                     className="w-full bg-surface-container-low border border-surface-container-high h-11 px-3 rounded text-body-md text-neutral-dark outline-none focus:border-primary transition-colors cursor-pointer"
                   >
-                    {geminiModels.length > 0 ? (
-                      geminiModels.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.display_name}
-                        </option>
-                      ))
-                    ) : (
-                      <>
-                        <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</option>
-                        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                        <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                      </>
-                    )}
+                    {getLlmOptions().map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.display_name}
+                      </option>
+                    ))}
                   </select>
                   {fetchingModels && (
                     <span className="text-[10px] text-primary flex items-center gap-1 pt-0.5">
@@ -658,19 +669,11 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
                     onChange={(e) => handleSettingChange('agent_model', e.target.value)}
                     className="w-full bg-surface-container-low border border-surface-container-high h-11 px-3 rounded text-body-md text-neutral-dark outline-none focus:border-primary transition-colors cursor-pointer"
                   >
-                    {geminiModels.length > 0 ? (
-                      geminiModels.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.display_name}
-                        </option>
-                      ))
-                    ) : (
-                      <>
-                        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                      </>
-                    )}
+                    {getLlmOptions().map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.display_name}
+                      </option>
+                    ))}
                   </select>
                 ) : (
                   <input

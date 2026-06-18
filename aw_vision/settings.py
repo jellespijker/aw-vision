@@ -65,10 +65,10 @@ class SettingsStore:
         self.table_name = "settings"
         self._cache: Dict[str, str] = {}
         self._defaults = {
-            "provider": "ollama",
+            "provider": "gemini",
             "gemini_api_key": "",
-            "gemini_llm_model": "gemini-2.0-flash",
-            "gemini_embedding_model": "gemini-embeddings-002",
+            "gemini_llm_model": "gemma-4-26b-a4b-it",
+            "gemini_embedding_model": "gemini-embedding-002",
             "gemini_context_size": "1048576",
             "gemini_rate_limit_delay": "4.0",
             "ollama_vision_model": "gemma4:e2b-it-qat",

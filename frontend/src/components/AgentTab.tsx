@@ -14,7 +14,7 @@ import {
   CheckCircle2,
   Terminal
 } from 'lucide-react'
-import type { ChatMessage, HistoryRecord, Project } from '../types'
+import type { ChatMessage, HistoryRecord, Project, DaemonStatus } from '../types'
 
 interface AgentTabProps {
   chatMessages: ChatMessage[]
@@ -26,6 +26,7 @@ interface AgentTabProps {
   projectsList: Project[]
   openImageLightbox: (rec: HistoryRecord) => void
   API_BASE: string
+  status: DaemonStatus | null
 }
 
 export const AgentTab: React.FC<AgentTabProps> = ({
@@ -37,7 +38,8 @@ export const AgentTab: React.FC<AgentTabProps> = ({
   historyRecords,
   projectsList,
   openImageLightbox,
-  API_BASE
+  API_BASE,
+  status
 }) => {
   const chatLogsRef = useRef<HTMLDivElement>(null)
 
@@ -277,7 +279,9 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                 </span>
               </div>
               <p className="text-text-secondary text-[11px] font-medium">
-                LangGraph ReAct Loop • Powered by Local Models
+                {status?.agent_provider === 'gemini' 
+                  ? `LangGraph ReAct Loop • Powered by Gemini Cloud (${status?.agent_model || 'Gemini'})`
+                  : `LangGraph ReAct Loop • Powered by Local Models (${status?.agent_model || 'gemma4'})`}
               </p>
             </div>
           </div>
@@ -399,7 +403,11 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                     <span className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '150ms' }}></span>
                     <span className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '300ms' }}></span>
                   </div>
-                  <span className="font-semibold text-text-secondary">Generating response via local gemma4 model...</span>
+                  <span className="font-semibold text-text-secondary">
+                    {status?.agent_provider === 'gemini'
+                      ? `Generating response via cloud ${status?.agent_model || 'Gemini'} model...`
+                      : `Generating response via local ${status?.agent_model || 'gemma4'} model...`}
+                  </span>
                 </div>
 
                 {/* AG-UI Pipeline Steps visualizer */}

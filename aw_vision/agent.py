@@ -150,16 +150,11 @@ Raw Tool Output:
 def tool_search_screenshots_semantic(query: str, limit: int = 5) -> str:
     """Perform a semantic vector similarity search on processed screenshots."""
     try:
-        # Step 1: Embed query via Ollama
-        url = f"{config.ollama_host}/api/embeddings"
-        payload = {"model": config.embedding_model, "prompt": query, "keep_alive": 0}
-        resp = requests.post(url, json=payload, timeout=60.0)
-        if resp.status_code != 200:
-            return f"Error embedding query: {resp.text}"
-
-        query_vector = resp.json().get("embedding", [])
-        if not query_vector:
-            return "Error: Empty embedding returned."
+        # Step 1: Embed query dynamically based on the active provider
+        from aw_vision.processor import processor
+        query_vector = processor.get_ollama_embedding(query)
+        if not query_vector or all(v == 0.0 for v in query_vector):
+            return "Error: Failed to generate query embedding vector."
 
         # Step 2: Query LanceDB
         results = db.search_semantic(query_vector, limit=limit)
@@ -264,16 +259,11 @@ def tool_query_jira(jql: str) -> str:
 def tool_get_similar_labeled_snapshots(query: str, limit: int = 5) -> str:
     """Search the database for similar labeled snapshots. This tool scores results by favoring manually/human labeled data and matching tags/app names."""
     try:
-        # Step 1: Embed query via Ollama
-        url = f"{config.ollama_host}/api/embeddings"
-        payload = {"model": config.embedding_model, "prompt": query, "keep_alive": 0}
-        resp = requests.post(url, json=payload, timeout=60.0)
-        if resp.status_code != 200:
-            return f"Error embedding query: {resp.text}"
-
-        query_vector = resp.json().get("embedding", [])
-        if not query_vector:
-            return "Error: Empty embedding returned."
+        # Step 1: Embed query dynamically based on the active provider
+        from aw_vision.processor import processor
+        query_vector = processor.get_ollama_embedding(query)
+        if not query_vector or all(v == 0.0 for v in query_vector):
+            return "Error: Failed to generate query embedding vector."
 
         words = [w.strip().lower() for w in re.split(r'\s+', query) if w.strip()]
 
@@ -350,6 +340,60 @@ class AgentState(TypedDict):
     next_node: str
 
 
+def clean_final_response(text: str) -> str:
+    """Clean up any leftover inner thoughts, plans, or meta-commentary from the final answer."""
+    if not text:
+        return text
+
+    # If the model explicitly used an Answer / Final Answer / Response block, extract it
+    for marker in [r"(?i)final\s+answer\s*:\s*", r"(?i)answer\s*:\s*", r"(?i)response\s*:\s*"]:
+        match = re.search(marker, text)
+        if match:
+            # Return everything after the marker
+            cleaned = text[match.end():].strip()
+            if cleaned:
+                return cleaned
+
+    # Otherwise, filter out common meta-thought lines
+    lines = text.splitlines()
+    cleaned_lines = []
+    skip_patterns = [
+        r"^(?:the\s+)?user\s+is\s+asking",
+        r"^the\s+previous\s+turn",
+        r"^to\s+provide\s+a\s+comprehensive",
+        r"^i\s+should\b",
+        r"^i'll\s+start\s+by",
+        r"^i\s+will\s+start\s+by",
+        r"^i\s+will\b",
+        r"^i\s+can\s+now\s+answer",
+        r"^i\s+can\b",
+        r"^i\s+have\s+enough\s+information",
+        r"^analysis:",
+        r"^thought:",
+        r"^reasoning:",
+        r"^plan:",
+        r"^step\s+\d+:",
+    ]
+
+    for line in lines:
+        stripped = line.strip()
+        # Skip empty lines at the very beginning of the response
+        if not stripped and not cleaned_lines:
+            continue
+        # Check against skip patterns
+        should_skip = False
+        for pattern in skip_patterns:
+            if re.search(pattern, stripped, re.IGNORECASE):
+                should_skip = True
+                break
+        if not should_skip:
+            cleaned_lines.append(line)
+
+    # Re-join and strip outer whitespace
+    cleaned_text = "\n".join(cleaned_lines).strip()
+    return cleaned_text or text
+
+
 def run_agent_node(state: AgentState) -> AgentState:
     """Call Ollama or Gemini and let the agent think or call a tool."""
     from aw_vision.settings import settings_store
@@ -382,13 +426,15 @@ def run_agent_node(state: AgentState) -> AgentState:
         "CRITICAL: Always use 'get_recent_screenshots' if the user asks what they worked on recently (e.g., in the past hour, today, this morning, or wants a timeline of recent activity).",
         "CRITICAL: If the user is asking to categorize a task/application under a project, or wants to check how similar activities were labeled, call 'get_similar_labeled_snapshots' to leverage historical human-verified and tag-matched project associations.",
         "",
-        "To invoke a tool, output a single line matching this format exactly:",
-        "CALL_TOOL: tool_name, argument_string",
-        "Example: CALL_TOOL: search_screenshots_semantic, purple sneakers",
-        "Example: CALL_TOOL: get_recent_screenshots, 15",
-        "Example: CALL_TOOL: aggregate_project_hours, None",
-        "",
-        "If you have enough information to answer, output your final answer directly to the user (do not use CALL_TOOL).",
+        "CRITICAL RESPONSE FORMAT RULES:",
+        "1. If you need to CALL a tool, you MUST output a single CALL_TOOL line at the bottom of your message matching this format exactly:",
+        "   CALL_TOOL: tool_name, argument_string",
+        "   Example: CALL_TOOL: search_screenshots_semantic, purple sneakers",
+        "   Example: CALL_TOOL: get_recent_screenshots, 15",
+        "   Example: CALL_TOOL: aggregate_project_hours, None",
+        "2. You can ONLY call ONE tool per turn. If you want to perform a multi-step plan, call the first tool now. You will receive the tool result in your next turn and can then call another tool.",
+        "3. Do NOT output a plan of multiple steps without actually calling the first tool. Listing 'Step 1: Get recent screenshots' is NOT enough; you MUST write 'CALL_TOOL: get_recent_screenshots, 10' at the bottom of your message so the system can run it.",
+        "4. If you are NOT calling a tool (i.e. you have enough information to answer the user's question), you MUST output ONLY the direct, polished final answer in clean Markdown. Do NOT output any thoughts, plans, 'I should summarize', 'The user is asking', or 'I have enough information to answer' meta-commentary. Write a direct, premium, professional response that directly answers the user's query.",
         "=== Conversation History ===",
     ]
 
@@ -398,7 +444,12 @@ def run_agent_node(state: AgentState) -> AgentState:
         elif isinstance(msg, HumanMessage):
             prompt_lines.append(f"User: {msg.content}")
         elif isinstance(msg, AIMessage):
-            prompt_lines.append(f"Assistant: {msg.content}")
+            content = msg.content
+            # If the AIMessage contains a tool call, clean it up to keep history dense and avoid thought leakage
+            tool_match = re.search(r"(CALL_TOOL:\s*\w+,\s*.*)", content)
+            if tool_match:
+                content = tool_match.group(1)
+            prompt_lines.append(f"Assistant: {content}")
 
     prompt = "\n".join(prompt_lines)
 
@@ -433,15 +484,66 @@ def run_agent_node(state: AgentState) -> AgentState:
         except Exception as e:
             reply = f"Error contacting Ollama: {e}"
 
-    new_messages = list(messages) + [AIMessage(content=reply)]
-
     # Check if a tool needs to be called
     match = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", reply)
+    if not match:
+        # Heuristic fallback 1: Standard function call syntax like get_recent_screenshots(10)
+        fallback_match = re.search(r"(?:CALL_TOOL:\s*)?(\w+)\s*\(\s*(['\" \w\-\d]*)\s*\)", reply)
+        if fallback_match:
+            t_name = fallback_match.group(1).strip()
+            t_arg = fallback_match.group(2).strip().strip("'\"")
+            if t_name in TOOLS:
+                print(f"[Fallback Parser] Detected function call syntax '{t_name}({t_arg})'. Appending CALL_TOOL line.")
+                reply += f"\n\nCALL_TOOL: {t_name}, {t_arg}"
+                match = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", reply)
+
+    if not match:
+        # Heuristic fallback 2: Multi-step plan without CALL_TOOL but containing tool name
+        lower_reply = reply.lower()
+        planning_signals = ["step 1", "i'll start by", "i will start by", "first step", "first, i'll", "first, i will", "should check recent", "start with getting recent", "let's start with", "let's start by"]
+        if any(sig in lower_reply for sig in planning_signals):
+            for t_name in ["get_recent_screenshots", "search_screenshots_semantic", "get_active_projects", "aggregate_project_hours", "query_github", "query_jira", "get_similar_labeled_snapshots"]:
+                if t_name in reply:
+                    arg = "10" if t_name == "get_recent_screenshots" else "None"
+                    print(f"[Fallback Parser] Detected planning words and tool '{t_name}'. Automatically appending CALL_TOOL line.")
+                    reply += f"\n\nCALL_TOOL: {t_name}, {arg}"
+                    match = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", reply)
+                    break
+
+    if not match:
+        # Heuristic fallback 3: Conversational tool call intent like "Let's call get_active_projects" or "I should check search_screenshots_semantic"
+        intent_match = re.search(
+            r"(?:call|run|query|check|use|using|execute|retrieve|get|trigger|need to|should|could|can|start with|first)\b.{0,40}\b(get_recent_screenshots|search_screenshots_semantic|get_active_projects|aggregate_project_hours|query_github|query_jira|get_similar_labeled_snapshots)\b",
+            reply,
+            re.IGNORECASE
+        )
+        if intent_match:
+            t_name = intent_match.group(1).strip()
+            # Determine suitable default arguments
+            if t_name == "get_recent_screenshots":
+                num_match = re.search(r"\b(\d+)\b", reply[max(0, reply.find(t_name) - 30):reply.find(t_name) + 100])
+                arg = num_match.group(1) if num_match else "10"
+            elif t_name in ["search_screenshots_semantic", "get_similar_labeled_snapshots", "query_github", "query_jira"]:
+                quotes_match = re.search(r"['\"]([^'\"]+)['\"]", reply[max(0, reply.find(t_name) - 50):reply.find(t_name) + 150])
+                if quotes_match:
+                    arg = quotes_match.group(1).strip()
+                else:
+                    user_msgs = [m.content for m in messages if isinstance(m, HumanMessage)]
+                    arg = user_msgs[-1] if user_msgs else "None"
+            else:
+                arg = "None"
+
+            print(f"[Fallback Parser] Detected calling intent for tool '{t_name}' with arg '{arg}'. Appending CALL_TOOL line.")
+            reply += f"\n\nCALL_TOOL: {t_name}, {arg}"
+            match = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", reply)
+
     if match:
         next_node = "tools"
     else:
+        reply = clean_final_response(reply)
         next_node = END
 
+    new_messages = list(messages) + [AIMessage(content=reply)]
     return {"messages": new_messages, "next_node": next_node}
 
 
