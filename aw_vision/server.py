@@ -97,6 +97,7 @@ def get_status():
     """Get system health, background daemon statuses, and verify active external dependencies (aw-server, Ollama, Capture CLI)."""
     import shutil
     import requests
+    from aw_vision.settings import settings_store
 
     try:
         pending_count = len(processor.get_pending_queue())
@@ -131,6 +132,9 @@ def get_status():
     grim_available = bool(shutil.which("grim"))
     capture_cli_available = spectacle_available or grim_available
 
+    agent_provider = settings_store.get("agent_provider")
+    agent_model = settings_store.get("agent_model")
+
     return {
         "watcher_running": watcher.running,
         "processor_running": processor.running,
@@ -147,7 +151,9 @@ def get_status():
         "capture_cli_details": {
             "spectacle": spectacle_available,
             "grim": grim_available,
-        }
+        },
+        "agent_provider": agent_provider,
+        "agent_model": agent_model,
     }
 
 
@@ -296,15 +302,12 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
         db_results = []
         db_fetch_limit = 10000
         if search:
-            # Embed search text for semantic search
-            import requests
-            url = f"{config.ollama_host}/api/embeddings"
-            payload = {"model": config.embedding_model, "prompt": search, "keep_alive": 0}
-            resp = requests.post(url, json=payload, timeout=5.0)
-            if resp.status_code == 200:
-                query_vector = resp.json().get("embedding", [])
+            # Embed search text dynamically based on the configured provider (Gemini or Ollama) using the processor helper
+            query_vector = processor.get_ollama_embedding(search)
+            if query_vector and not all(v == 0.0 for v in query_vector):
                 db_results = db.search_semantic(query_vector, limit=db_fetch_limit)
             else:
+                print("Warning: Failed to generate search embedding vector. Defaulting to all records.")
                 db_results = db.get_all_records(limit=db_fetch_limit)
         else:
             db_results = db.get_all_records(limit=db_fetch_limit)
@@ -764,6 +767,10 @@ def test_gemini_key(payload: TestKeyRequest):
     if not api_key:
         raise HTTPException(status_code=400, detail="API Key is required.")
 
+    if api_key == "••••••••":
+        from aw_vision.settings import settings_store
+        api_key = settings_store.get("gemini_api_key")
+
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     try:
         resp = requests.get(url, timeout=10.0)
@@ -786,6 +793,14 @@ def get_reembed_status():
     """Retrieve status of any active database-wide embedding recalculation."""
     from aw_vision.db import db
     return db._reembedding_status
+
+
+@app.post("/api/settings/reembed")
+def force_reembed():
+    """Manually force trigger a database-wide re-embedding migration."""
+    from aw_vision.db import db
+    db.trigger_batch_reembedding(force=True)
+    return {"status": "success", "message": "Background re-embedding recalculation initiated."}
 
 
 # Serve compiled static React files in production/standalone mode

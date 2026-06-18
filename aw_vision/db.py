@@ -101,13 +101,22 @@ class VisionDB:
 
         print(f"[Re-embedding] Starting database-wide re-embedding migration using {provider} - {model}...")
 
+        # Only clear the error if it is NOT a Gemini migration fallback warning
+        prev_error = self._reembedding_status.get("error")
+        keep_error = False
+        if prev_error and "Gemini Migration Error" in prev_error and provider != "gemini":
+            keep_error = True
+
         self._reembedding_status.update({
             "is_running": True,
             "total_records": 0,
             "processed_records": 0,
-            "error": None,
+            "error": prev_error if keep_error else None,
             "current_model": f"{provider}:{model}"
         })
+
+        should_fallback_to_ollama = False
+        fallback_friendly_error = None
 
         try:
             tbl = self.table
@@ -133,19 +142,33 @@ class VisionDB:
 
                 batch_recs = records[i:i + batch_size]
 
-                # Build texts
+                # Build texts and matching physical image paths
                 texts = []
+                img_paths = []
+                processed_dir = config.screenshots_dir / "processed"
                 for r in batch_recs:
                     desc = r.get("description") or ""
                     ocr = r.get("ocr_text") or ""
                     joint_text = f"Description: {desc}\n\nExtracted Screen Text: {ocr}"
                     texts.append(joint_text)
 
+                    image_path_str = r.get("image_path")
+                    if image_path_str:
+                        p = Path(image_path_str)
+                        if not p.is_absolute():
+                            p = processed_dir / p.name
+                        if p.exists():
+                            img_paths.append(str(p))
+                        else:
+                            img_paths.append(None)
+                    else:
+                        img_paths.append(None)
+
                 # Generate embeddings
                 new_vectors = []
                 if current_provider == "gemini":
                     if is_internet_online():
-                        new_vectors = generate_gemini_batch_embeddings(texts)
+                        new_vectors = generate_gemini_batch_embeddings(texts, img_paths=img_paths)
                     else:
                         raise RuntimeError("Network offline during Gemini re-embedding migration.")
                 else:
@@ -178,10 +201,52 @@ class VisionDB:
         except Exception as e:
             import traceback
             traceback.print_exc()
-            print(f"[Re-embedding] Error during re-embedding migration: {e}")
-            self._reembedding_status["error"] = str(e)
+            err_str = str(e)
+            print(f"[Re-embedding] Error during re-embedding migration: {err_str}")
+
+            is_gemini_terminal_error = False
+            fallback_reason = ""
+
+            if provider == "gemini":
+                # Check for prepayment depletion or other quota limits
+                if any(x in err_str.lower() for x in ["prepayment", "credit", "depleted", "resource_exhausted", "quota", "429"]):
+                    is_gemini_terminal_error = True
+                    fallback_reason = "Google Gemini API billing/quota exceeded (prepayment credits depleted)."
+                elif any(x in err_str.lower() for x in ["api_key_invalid", "api key not valid", "invalid api key", "400", "401", "403"]):
+                    is_gemini_terminal_error = True
+                    fallback_reason = "Google Gemini API key authentication failed."
+                elif any(x in err_str.lower() for x in ["returned 0 vectors", "returned empty", "empty embeddings", "mismatched", "0 vectors for", "empty list", "empty embedding values", "empty embeddings list"]):
+                    is_gemini_terminal_error = True
+                    fallback_reason = "Google Gemini API returned empty or mismatched vector responses."
+
+            if is_gemini_terminal_error:
+                fallback_friendly_error = (
+                    f"Gemini Migration Error: {fallback_reason} "
+                    "Automatically falling back to local Ollama embeddings to prevent ingestion lockup. "
+                    "Please check your Google AI Studio project/billing at https://ai.studio/projects."
+                )
+                should_fallback_to_ollama = True
+                print("[Re-embedding] Terminal Gemini API error encountered. Prepare fallback to Ollama.")
+            else:
+                self._reembedding_status["error"] = err_str
         finally:
             self._reembedding_status["is_running"] = False
+
+        if should_fallback_to_ollama:
+            self._reembedding_status["error"] = fallback_friendly_error
+            try:
+                print("[Re-embedding] Initiating fallback migration back to Ollama...")
+                settings_store.set("provider", "ollama")
+                settings_store.load_all()
+
+                # Reset table reference so next access forces schema migration back to Ollama dimension
+                self._table = None
+
+                # Access table to trigger schema migration and start re-embedding
+                _ = self.table
+            except Exception as fallback_err:
+                print(f"[Re-embedding] Error during automatic fallback to Ollama: {fallback_err}")
+                self._reembedding_status["error"] = f"{fallback_friendly_error} (Ollama fallback failed: {fallback_err})"
 
     def _migrate_schema_if_needed(self, db_conn, active_dim: Optional[int] = None):
         print("MIGRATION: Evolving LanceDB schema and updating record layouts...")

@@ -17,6 +17,8 @@ export interface DaemonStatus {
     spectacle: boolean
     grim: boolean
   }
+  agent_provider?: string
+  agent_model?: string
 }
 
 export interface ChatMessage {

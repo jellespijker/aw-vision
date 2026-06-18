@@ -173,7 +173,7 @@ class BulkProcessor:
         queue.sort(key=lambda x: x[1].name)
         return queue
 
-    def get_ollama_embedding(self, text: str, rec_id: str = None) -> list[float]:
+    def get_ollama_embedding(self, text: str, img_path: str = None, rec_id: str = None) -> list[float]:
         """Fetch vector embedding for the description using configured provider (Gemini or Ollama)."""
         from aw_vision.settings import settings_store
         from aw_vision.gemini import generate_gemini_embedding, is_internet_online
@@ -184,7 +184,7 @@ class BulkProcessor:
         embedding = []
         if use_gemini:
             try:
-                embedding = generate_gemini_embedding(text)
+                embedding = generate_gemini_embedding(text, img_path=img_path)
             except Exception as e:
                 err_msg = f"Error generating Gemini embedding: {e}. Falling back to Ollama."
                 if rec_id:
@@ -418,22 +418,35 @@ class BulkProcessor:
             traceback.print_exc()
 
     def process_batch(self, queue: list[tuple[Path, Path]], projects: list) -> bool:
-        """Process a list of raw screenshot and metadata tuples sequentially in distinct stages to limit Ollama model load/unload cycles."""
+        """Process a list of raw screenshot and metadata tuples sequentially in distinct stages, chunked into smaller groups to prevent UI freezing and commit progressively."""
         with self.lock:
             if self.is_processing:
                 print(f"[{datetime.now()}] [BulkProcessor] A batch processing run is already active. Skipping.")
                 return False
             self.is_processing = True
 
-        batch_items = []
+        chunk_size = 10
+        chunks = [queue[i:i + chunk_size] for i in range(0, len(queue), chunk_size)]
+
+        overall_success = False
         try:
-            return self._process_batch_impl(queue, projects, batch_items)
+            for chunk_idx, chunk in enumerate(chunks):
+                print(f"[{datetime.now()}] [BulkProcessor] Processing chunk {chunk_idx + 1}/{len(chunks)} of size {len(chunk)}...")
+                batch_items = []
+                try:
+                    success = self._process_batch_impl(chunk, projects, batch_items)
+                    if success:
+                        overall_success = True
+                finally:
+                    # Clean up processing_ids for this completed chunk immediately so UI can update and fetch them
+                    with self.lock:
+                        for item in batch_items:
+                            rec_id = item[2]
+                            self.processing_ids.discard(rec_id)
+            return overall_success
         finally:
             with self.lock:
                 self.is_processing = False
-                for item in batch_items:
-                    rec_id = item[2]
-                    self.processing_ids.discard(rec_id)
 
     def _process_batch_impl(self, queue: list[tuple[Path, Path]], projects: list, batch_items: list) -> bool:
         with self.lock:
@@ -661,7 +674,7 @@ class BulkProcessor:
                         self.log_step(rec_id, "Stage 3/6: Retrieving semantic neighbor context & running Project Classification...")
                         # Compute quick query vector using generated active window description & OCR text
                         query_text = f"Description: {active_window_description}\n\nExtracted Screen Text:\n{truncated_ocr}"
-                        query_vector = self.get_ollama_embedding(query_text, rec_id=rec_id)
+                        query_vector = self.get_ollama_embedding(query_text, img_path=str(img_path), rec_id=rec_id)
 
                         # Query historically similar snapshots
                         similar_snapshots = db.get_similar_labeled_snapshots(
@@ -873,7 +886,7 @@ You must respond in valid JSON format matching this schema:
                     if use_gemini:
                         self.log_step(rec_id, f"Generating Gemini semantic embedding using '{settings_store.get('gemini_embedding_model')}'...")
                         try:
-                            embedding = generate_gemini_embedding(embedding_text)
+                            embedding = generate_gemini_embedding(embedding_text, img_path=str(img_path))
                         except Exception as eg_emb:
                             self.log_step(rec_id, f"Error generating Gemini embedding: {eg_emb}. Falling back to Ollama.")
 

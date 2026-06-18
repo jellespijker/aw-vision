@@ -622,6 +622,7 @@ export default function App() {
                   projectsList={projectsList}
                   openImageLightbox={openImageLightbox}
                   API_BASE={API_BASE}
+                  status={status}
                 />
               )}
 

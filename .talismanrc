@@ -6,13 +6,13 @@ fileignoreconfig:
 - filename: aw_vision/config.py
   checksum: d00acea7bdf1effad1f60a24800292cc649706de9b8500d9162c908edeb64644
 - filename: aw_vision/db.py
-  checksum: 67af35b2b041aa06cbd9b0a66137a2d63645b32cb7f2840cd5dfff4d5934a8cd
+  checksum: ec511e97df897f9ccd5fc97397f54d8093b366da8bb914c890f36ca5dbc8980d
 - filename: AGENTS.md
   checksum: 6519a7c007f975609f1021acef754918212050f78a4e5e8e58e77c50c999565b
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
-  checksum: 5f8f991b2bb5210471d71ef2a3425d57848aef76af3c8e995a73332b5b8b1763
+  checksum: 5548ab658b03c2b8648d79625249f4a8154f42d50523d1fd1cb85c3fc0a5dc37
 - filename: frontend/src/App.tsx
   checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
 - filename: frontend/src/components/ProjectsTab.tsx
@@ -28,9 +28,9 @@ fileignoreconfig:
 - filename: aw_vision/agent.py
   checksum: 4d9d9bf55ce213b5331e7d545d1827c3ae1544de9a7ab3e8e4a090c556156e62
 - filename: aw_vision/settings.py
-  checksum: 2cf270c607a0b022f5acf927562b72095a45131f08ca27aa267674403f17a051
+  checksum: 87fc9eb3b53ae5d70d2384d3e86c546925dc83bb67150a22f88b47552e267bd2
 - filename: aw_vision/gemini.py
-  checksum: 0dc61001d93f9a79b1d88973f02e4f43056563cfc8f791f4f8dea6c8d9ccabd1
+  checksum: 783bee7627046607b31cd14b11fbf90477b09c53541788e0e211d7c3f5b259b8
 - filename: frontend/src/components/SettingsTab.tsx
-  checksum: b3a1f6c6f0b0d37f2fac05c9029f184cc048a0d0ec5d32801f0ceee11d59b04b
+  checksum: db98d6b8d075cc6c9f9121373f1f609065db89b6dce3b7f0a4256c650321586e
 version: ""
