@@ -66,6 +66,7 @@ class SettingsStore:
         self._cache: Dict[str, str] = {}
         self._defaults = {
             "provider": "gemini",
+            "ocr_provider": "ollama",
             "gemini_api_key": "",
             "gemini_llm_model": "gemma-4-26b-a4b-it",
             "gemini_embedding_model": "gemini-embedding-002",

@@ -40,6 +40,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
   // Settings state
   const [settings, setSettings] = useState<Record<string, any>>({
     provider: 'gemini',
+    ocr_provider: 'ollama',
     gemini_api_key: '',
     gemini_llm_model: 'gemma-4-26b-a4b-it',
     gemini_embedding_model: 'gemini-embedding-002',
@@ -535,10 +536,29 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
                   </span>
                 </div>
 
-                <div className="p-4 bg-surface-container-low rounded border border-surface-container-high text-body-sm text-text-secondary flex items-start gap-2 leading-relaxed">
+                <div className="space-y-1.5">
+                  <label htmlFor="ocrProviderSelect" className="text-body-sm font-semibold text-text-secondary">
+                    OCR Provider
+                  </label>
+                  <select
+                    id="ocrProviderSelect"
+                    name="ocrProviderSelect"
+                    value={settings.ocr_provider || 'ollama'}
+                    onChange={(e) => handleSettingChange('ocr_provider', e.target.value)}
+                    className="w-full bg-surface-container-low border border-surface-container-high h-11 px-3 rounded text-body-md text-neutral-dark outline-none focus:border-primary transition-colors cursor-pointer"
+                  >
+                    <option value="ollama">Ollama (Local GLM-OCR)</option>
+                    <option value="gemini">Gemini (Cloud OCR)</option>
+                  </select>
+                  <p className="text-[11px] text-text-secondary">
+                    Select where screenshot text extraction takes place.
+                  </p>
+                </div>
+
+                <div className="p-4 bg-surface-container-low rounded border border-surface-container-high text-body-sm text-text-secondary flex items-start gap-2 leading-relaxed md:col-span-2">
                   <CheckCircle2 className="w-4.5 h-4.5 text-success-green shrink-0 mt-0.5" />
                   <div>
-                    <strong>Dual-Purpose Optimization:</strong> In Gemini mode, Phase 1 (local OCR) is bypassed, and Phase 2 combines both OCR and Vision context extraction in a single multimodal request to save time.
+                    <strong>Pipeline Optimization:</strong> If both main provider and OCR provider are set to Gemini, local OCR is bypassed, and Phase 2 combines both OCR and Vision extraction in a single multimodal request to save API quota and time.
                   </div>
                 </div>
               </div>

@@ -28,9 +28,9 @@ fileignoreconfig:
 - filename: aw_vision/agent.py
   checksum: 4d9d9bf55ce213b5331e7d545d1827c3ae1544de9a7ab3e8e4a090c556156e62
 - filename: aw_vision/settings.py
-  checksum: 87fc9eb3b53ae5d70d2384d3e86c546925dc83bb67150a22f88b47552e267bd2
+  checksum: da451548e43d4b4453cb077dfd11c59bee5b3c8fb7c91ea36ee64948c285f961
 - filename: aw_vision/gemini.py
-  checksum: 783bee7627046607b31cd14b11fbf90477b09c53541788e0e211d7c3f5b259b8
+  checksum: e1fd009f0d8bcc0b4d3849eeb9a964b02be0e50c92d58498520589a94cf2d04d
 - filename: frontend/src/components/SettingsTab.tsx
-  checksum: db98d6b8d075cc6c9f9121373f1f609065db89b6dce3b7f0a4256c650321586e
+  checksum: 6468b44da12af62d87ff90167adf1340b5a8625e274dcdcdd1af182d6f0374e6
 version: ""

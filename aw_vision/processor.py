@@ -491,11 +491,28 @@ class BulkProcessor:
                 # Only run OCR if not already cached
                 if "ocr_text" not in meta or meta["ocr_text"] is None:
                     from aw_vision.settings import settings_store
-                    from aw_vision.gemini import is_internet_online
-                    use_gemini = (settings_store.get("provider") == "gemini" and is_internet_online())
+                    from aw_vision.gemini import is_internet_online, run_gemini_ocr
+                    provider = settings_store.get("provider") or "gemini"
+                    ocr_provider = settings_store.get("ocr_provider") or "ollama"
+                    internet_online = is_internet_online()
 
-                    if use_gemini:
-                        self.log_step(rec_id, "Gemini provider is active & online. Skipping local OCR; will run combined Gemini OCR + Vision in Phase 2.")
+                    if provider == "gemini" and ocr_provider == "gemini" and internet_online:
+                        self.log_step(rec_id, "Both main and OCR providers are Gemini & online. Skipping Phase 1 OCR; will run combined Gemini OCR + Vision in Phase 2.")
+                    elif ocr_provider == "gemini" and internet_online:
+                        self.log_step(rec_id, "Running Cloud OCR using Gemini...")
+                        try:
+                            ocr_text = run_gemini_ocr(img_path)
+                            meta["ocr_text"] = ocr_text
+                            with open(meta_path, "w", encoding="utf-8") as f:
+                                json.dump(meta, f, indent=2)
+                            self.log_step(rec_id, f"Cloud OCR complete. Length: {len(ocr_text)}")
+                        except Exception as ocr_err:
+                            self.log_step(rec_id, f"Error running Cloud Gemini OCR, falling back to local Ollama: {ocr_err}")
+                            keep_alive = 0 if (idx == N - 1) else 300
+                            ocr_text = self.extract_ocr_text(img_path, rec_id, keep_alive=keep_alive)
+                            meta["ocr_text"] = ocr_text
+                            with open(meta_path, "w", encoding="utf-8") as f:
+                                json.dump(meta, f, indent=2)
                     else:
                         # Keep model loaded during the sweep, unload immediately on the last item of Phase 1
                         keep_alive = 0 if (idx == N - 1) else 300
@@ -527,7 +544,11 @@ class BulkProcessor:
                     use_gemini = (settings_store.get("provider") == "gemini" and is_internet_online())
 
                     if use_gemini:
-                        self.log_step(rec_id, "Running combined Gemini OCR and Vision analysis...")
+                        cached_ocr = meta.get("ocr_text")
+                        if cached_ocr:
+                            self.log_step(rec_id, "Running Gemini Vision analysis with pre-extracted OCR text...")
+                        else:
+                            self.log_step(rec_id, "Running combined Gemini OCR and Vision analysis...")
                         existing_tags = db.get_all_unique_tags()
                         if len(existing_tags) > 100:
                             existing_tags = existing_tags[:100]
@@ -536,9 +557,10 @@ class BulkProcessor:
                                 img_path=img_path,
                                 full_img_path=full_img_path if full_img_path.exists() else None,
                                 projects=projects,
-                                existing_tags=existing_tags
+                                existing_tags=existing_tags,
+                                ocr_text=cached_ocr if cached_ocr else None
                             )
-                            meta["ocr_text"] = res.get("ocr_text", "")
+                            meta["ocr_text"] = res.get("ocr_text", "") or cached_ocr or ""
                             meta["description"] = res.get("description", "No description generated.")
                             meta["tags"] = res.get("tags", [])
                             meta["project_number"] = res.get("project_number", "None")
@@ -852,7 +874,7 @@ You must respond in valid JSON format matching this schema:
                 else:
                     self.log_step(rec_id, "Vision analysis results already cached in metadata. Skipping vision model.")
             except Exception as e:
-                self.log_step(rec_id, f"Error in Phase 2 (Vision) for {img_path.name}: {e}")
+                self.log_step(rec_id, f"Error in Phase 2 (Vision) for {img_path.name}: {e}\n{traceback.format_exc()}")
                 failed_ids.add(rec_id)
 
         # -------------------------------------------------------------
