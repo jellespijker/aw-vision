@@ -13,6 +13,26 @@ from aw_vision.settings import settings_store
 _last_request_time = 0.0
 
 
+def _get_resolved_llm_model(model_name: str) -> str:
+    """Map deprecated/preview Gemini LLM models to currently supported production versions."""
+    if model_name in (
+        "gemini-2.0-flash-lite",
+        "gemini-2.0-flash-lite-preview",
+        "gemini-2.0-flash-lite-preview-02-05",
+        "gemini-2.0-flash-lite-001",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-preview",
+        "gemini-2.0-flash-001",
+        "gemini-flash-latest",
+        "gemini-flash-lite-latest",
+        "gemma-4-26b-a4b-it",
+        "gemma-4-31b-it",
+    ):
+        print(f"[Gemini Model Resolver] Resolving model '{model_name}' to 'gemini-2.5-flash' for cloud processing.")
+        return "gemini-2.5-flash"
+    return model_name
+
+
 def is_internet_online() -> bool:
     """Check if the internet is online and the Gemini API is reachable with a short timeout."""
     try:
@@ -74,6 +94,17 @@ def gemini_request_with_retry(
             return resp
 
         except requests.exceptions.RequestException as e:
+            # Check for non-retryable HTTP client errors (4xx other than 429) to fail fast
+            if hasattr(e, "response") and e.response is not None:
+                status_code = e.response.status_code
+                if 400 <= status_code < 500 and status_code != 429:
+                    try:
+                        err_data = e.response.json()
+                        err_msg = err_data.get("error", {}).get("message", str(e))
+                        raise RuntimeError(f"Gemini API Client Error ({status_code}): {err_msg}")
+                    except Exception:
+                        raise RuntimeError(f"Gemini API Client Error ({status_code}): {e}")
+
             if attempt == max_retries:
                 # Attempt to extract detailed API message if available
                 if hasattr(e, "response") and e.response is not None:
@@ -237,6 +268,7 @@ def run_gemini_ocr(img_path: Path, api_key: Optional[str] = None) -> str:
     """Call Gemini to extract raw OCR text from a desktop screenshot."""
     key = api_key or settings_store.get("gemini_api_key")
     model = settings_store.get("gemini_llm_model")
+    model = _get_resolved_llm_model(model)
     if not key:
         raise ValueError("Gemini API key is not configured.")
 
@@ -274,6 +306,7 @@ def run_gemini_combined_ocr_vision(
     """Perform screenshot OCR and Vision Analysis simultaneously in a single, high-efficiency Gemini multimodal API call."""
     key = settings_store.get("gemini_api_key")
     model = settings_store.get("gemini_llm_model")
+    model = _get_resolved_llm_model(model)
     if not key:
         raise ValueError("Gemini API key is not configured.")
 
@@ -333,7 +366,7 @@ You must respond in valid JSON format matching this exact schema:
 
     payload = {"contents": [{"parts": contents_parts}], "generationConfig": {"responseMimeType": "application/json"}}
 
-    resp = gemini_request_with_retry("POST", url, json_data=payload, timeout=45.0)
+    resp = gemini_request_with_retry("POST", url, json_data=payload, timeout=90.0)
     data = resp.json()
 
     # Parse and extract text from Gemini response structure
@@ -349,6 +382,7 @@ def run_gemini_chat_agent(prompt: str, history: List[Dict[str, str]], context_si
     """Run an interactive conversation stream using Gemini LLM for the Memory Agent."""
     key = settings_store.get("gemini_api_key")
     model = settings_store.get("agent_model")
+    model = _get_resolved_llm_model(model)
     if not key:
         return "Gemini API key is not configured for the Agent."
 

@@ -72,9 +72,10 @@ export default function App() {
   // Check backend server connection and poll status
   useEffect(() => {
     checkServerStatus()
-    const timer = setInterval(getDaemonStatus, 5000)
+    const interval = status?.is_processing ? 1500 : 5000
+    const timer = setInterval(getDaemonStatus, interval)
     return () => clearInterval(timer)
-  }, [serverOnline])
+  }, [serverOnline, status?.is_processing])
 
   // Poll history records if there are pending items in the queue to update live
   useEffect(() => {

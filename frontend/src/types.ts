@@ -9,6 +9,12 @@ export interface DaemonStatus {
   pending_queue_size: number
   processed_database_size: number
   processing_ids?: string[]
+  is_processing?: boolean
+  current_batch_total?: number
+  current_batch_processed?: number
+  current_rec_id?: string | null
+  current_stage?: string | null
+  last_error?: string | null
   system_load: SystemLoad
   aw_server_online?: boolean
   ollama_online?: boolean

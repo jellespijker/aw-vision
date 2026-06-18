@@ -552,5 +552,63 @@ class VisionDB:
             print(f"Error scoring similar labeled snapshots: {e}")
             return []
 
+    def get_similar_labeled_snapshots_by_metadata(self, app_name: str, window_title: str, limit: int = 5) -> list[dict]:
+        """Perform a fast metadata SQL-like query and keyword match to find similar labeled snapshots without loading any ML embedding models."""
+        import re
+        try:
+            if not app_name or app_name == "Unknown":
+                return []
+
+            # Escape single quotes for SQL-like query safety
+            safe_app = app_name.replace("'", "''")
+
+            # Retrieve snapshots for the same app that have an assigned project number
+            where_clause = f"app_name = '{safe_app}' AND project_number IS NOT NULL AND project_number != 'None'"
+            results = self.query_metadata(where_clause, limit=100)
+            if not results:
+                return []
+
+            # Extract lowercase alphanumeric keywords from the current window_title
+            keywords = [w.lower() for w in re.split(r"\W+", window_title or "") if len(w) >= 3]
+
+            processed_results = []
+            for r in results:
+                proj = r.get("project_number")
+                if not proj:
+                    continue
+
+                score = 1.0
+                # Human labeled boost
+                is_human = bool(r.get("human_labeled", False))
+                if is_human:
+                    score += 5.0
+
+                # Keyword title overlap boost
+                r_title = r.get("window_title", "").lower()
+                matches = 0
+                for kw in keywords:
+                    if kw in r_title:
+                        matches += 1
+                if keywords:
+                    score += (matches / len(keywords)) * 2.0
+
+                processed_results.append({
+                    "id": r.get("id"),
+                    "project_number": proj,
+                    "score": score,
+                    "human_labeled": is_human,
+                    "description": r.get("description"),
+                    "window_title": r.get("window_title"),
+                    "app_name": r.get("app_name"),
+                    "tags": r.get("tags") or [],
+                })
+
+            # Sort by total calculated score descending
+            processed_results.sort(key=lambda x: x["score"], reverse=True)
+            return processed_results[:limit]
+        except Exception as e:
+            print(f"Error scoring metadata-similar snapshots: {e}")
+            return []
+
 
 db = VisionDB()

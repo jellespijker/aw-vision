@@ -141,6 +141,12 @@ def get_status():
         "pending_queue_size": pending_count,
         "processed_database_size": total_records,
         "processing_ids": list(processor.processing_ids),
+        "is_processing": processor.is_processing,
+        "current_batch_total": getattr(processor, "current_batch_total", 0),
+        "current_batch_processed": getattr(processor, "current_batch_processed", 0),
+        "current_rec_id": getattr(processor, "current_rec_id", None),
+        "current_stage": getattr(processor, "current_stage", None),
+        "last_error": getattr(processor, "last_error", None),
         "system_load": {
             "cpu_percent": psutil.cpu_percent(),
             "memory_percent": psutil.virtual_memory().percent,
@@ -303,7 +309,7 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
         db_fetch_limit = 10000
         if search:
             # Embed search text dynamically based on the configured provider (Gemini or Ollama) using the processor helper
-            query_vector = processor.get_ollama_embedding(search)
+            query_vector = processor.get_embedding(search)
             if query_vector and not all(v == 0.0 for v in query_vector):
                 db_results = db.search_semantic(query_vector, limit=db_fetch_limit)
             else:
