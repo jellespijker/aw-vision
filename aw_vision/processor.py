@@ -52,6 +52,11 @@ class BulkProcessor:
         self.processed_dir = config.screenshots_dir / "processed"
         self.running = False
         self.is_processing = False
+        self.current_batch_total = 0
+        self.current_batch_processed = 0
+        self.current_rec_id = None
+        self.current_stage = None
+        self.last_error = None
         self.thread = None
         self.lock = threading.Lock()
         self.processing_ids = set()
@@ -173,7 +178,7 @@ class BulkProcessor:
         queue.sort(key=lambda x: x[1].name)
         return queue
 
-    def get_ollama_embedding(self, text: str, img_path: str = None, rec_id: str = None) -> list[float]:
+    def get_embedding(self, text: str, img_path: str = None, rec_id: str = None, keep_alive: int = 300) -> list[float]:
         """Fetch vector embedding for the description using configured provider (Gemini or Ollama)."""
         from aw_vision.settings import settings_store
         from aw_vision.gemini import generate_gemini_embedding, is_internet_online
@@ -184,6 +189,8 @@ class BulkProcessor:
         embedding = []
         if use_gemini:
             try:
+                if rec_id:
+                    self.log_step(rec_id, f"Generating Gemini semantic embedding using '{settings_store.get('gemini_embedding_model') or 'default'}'.")
                 embedding = generate_gemini_embedding(text, img_path=img_path)
             except Exception as e:
                 err_msg = f"Error generating Gemini embedding: {e}. Falling back to Ollama."
@@ -195,8 +202,10 @@ class BulkProcessor:
         if not embedding:
             try:
                 model = settings_store.get("ollama_embedding_model") or config.embedding_model
+                if rec_id:
+                    self.log_step(rec_id, f"Generating local semantic embedding using '{model}' with keep_alive={keep_alive}s...")
                 url = f"{config.ollama_host}/api/embeddings"
-                payload = {"model": model, "prompt": text, "keep_alive": 0}
+                payload = {"model": model, "prompt": text, "keep_alive": keep_alive}
                 resp = requests.post(url, json=payload, timeout=30.0)
                 if resp.status_code == 200:
                     embedding = resp.json().get("embedding", [])
@@ -213,8 +222,12 @@ class BulkProcessor:
 
         # Pad or truncate to expected dimension
         if len(embedding) < expected_dim:
+            if rec_id:
+                self.log_step(rec_id, f"Correction: Padding generated vector from {len(embedding)} to {expected_dim} to match DB layout.")
             embedding = list(embedding) + [0.0] * (expected_dim - len(embedding))
         elif len(embedding) > expected_dim:
+            if rec_id:
+                self.log_step(rec_id, f"Correction: Truncating generated vector from {len(embedding)} to {expected_dim} to match DB layout.")
             embedding = list(embedding)[:expected_dim]
 
         return embedding
@@ -424,8 +437,23 @@ class BulkProcessor:
                 print(f"[{datetime.now()}] [BulkProcessor] A batch processing run is already active. Skipping.")
                 return False
             self.is_processing = True
+            self.current_batch_total = len(queue)
+            self.current_batch_processed = 0
+            self.current_rec_id = None
+            self.current_stage = "Initializing batch..."
+            self.last_error = None
 
-        chunk_size = 10
+        from aw_vision.settings import settings_store
+        provider = settings_store.get("provider") or "gemini"
+
+        # Determine chunk size dynamically:
+        # - Cloud-primary mode (Gemini): chunk_size = 1 so every item is fully processed and committed immediately to LanceDB (gives instant UI updates)
+        # - Mixed/Local mode (Ollama involved): chunk_size = 10 to balance model-swapping overhead with progressive commits.
+        if provider == "gemini":
+            chunk_size = 1
+        else:
+            chunk_size = 10
+
         chunks = [queue[i:i + chunk_size] for i in range(0, len(queue), chunk_size)]
 
         overall_success = False
@@ -447,6 +475,8 @@ class BulkProcessor:
         finally:
             with self.lock:
                 self.is_processing = False
+                self.current_rec_id = None
+                self.current_stage = None
 
     def _process_batch_impl(self, queue: list[tuple[Path, Path]], projects: list, batch_items: list) -> bool:
         with self.lock:
@@ -477,6 +507,9 @@ class BulkProcessor:
         # Phase 1: Optimize & OCR Sweep
         # -------------------------------------------------------------
         for idx, (img_path, meta_path, rec_id, meta) in enumerate(batch_items):
+            with self.lock:
+                self.current_rec_id = rec_id
+                self.current_stage = f"Phase 1/3 (OCR Extraction): Item {self.current_batch_processed + idx + 1}/{self.current_batch_total}"
             try:
                 self.log_step(rec_id, f"Phase 1/3: Image Optimization & OCR extraction (item {idx + 1}/{N} in batch)")
 
@@ -491,11 +524,28 @@ class BulkProcessor:
                 # Only run OCR if not already cached
                 if "ocr_text" not in meta or meta["ocr_text"] is None:
                     from aw_vision.settings import settings_store
-                    from aw_vision.gemini import is_internet_online
-                    use_gemini = (settings_store.get("provider") == "gemini" and is_internet_online())
+                    from aw_vision.gemini import is_internet_online, run_gemini_ocr
+                    provider = settings_store.get("provider") or "gemini"
+                    ocr_provider = settings_store.get("ocr_provider") or "ollama"
+                    internet_online = is_internet_online()
 
-                    if use_gemini:
-                        self.log_step(rec_id, "Gemini provider is active & online. Skipping local OCR; will run combined Gemini OCR + Vision in Phase 2.")
+                    if provider == "gemini" and ocr_provider == "gemini" and internet_online:
+                        self.log_step(rec_id, "Both main and OCR providers are Gemini & online. Skipping Phase 1 OCR; will run combined Gemini OCR + Vision in Phase 2.")
+                    elif ocr_provider == "gemini" and internet_online:
+                        self.log_step(rec_id, "Running Cloud OCR using Gemini...")
+                        try:
+                            ocr_text = run_gemini_ocr(img_path)
+                            meta["ocr_text"] = ocr_text
+                            with open(meta_path, "w", encoding="utf-8") as f:
+                                json.dump(meta, f, indent=2)
+                            self.log_step(rec_id, f"Cloud OCR complete. Length: {len(ocr_text)}")
+                        except Exception as ocr_err:
+                            self.log_step(rec_id, f"Error running Cloud Gemini OCR, falling back to local Ollama: {ocr_err}")
+                            keep_alive = 0 if (idx == N - 1) else 300
+                            ocr_text = self.extract_ocr_text(img_path, rec_id, keep_alive=keep_alive)
+                            meta["ocr_text"] = ocr_text
+                            with open(meta_path, "w", encoding="utf-8") as f:
+                                json.dump(meta, f, indent=2)
                     else:
                         # Keep model loaded during the sweep, unload immediately on the last item of Phase 1
                         keep_alive = 0 if (idx == N - 1) else 300
@@ -509,11 +559,16 @@ class BulkProcessor:
                     self.log_step(rec_id, "OCR text already cached in metadata JSON. Skipping OCR.")
             except Exception as e:
                 self.log_step(rec_id, f"Error in Phase 1 (OCR) for {img_path.name}: {e}")
+                with self.lock:
+                    self.last_error = f"Phase 1 error for {rec_id}: {e}"
 
         # -------------------------------------------------------------
         # Phase 2: Vision Analysis Sweep (6-stage sequential multi-prompt pipeline)
         # -------------------------------------------------------------
         for idx, (img_path, meta_path, rec_id, meta) in enumerate(batch_items):
+            with self.lock:
+                self.current_rec_id = rec_id
+                self.current_stage = f"Phase 2/3 (Vision Analysis): Item {self.current_batch_processed + idx + 1}/{self.current_batch_total}"
             try:
                 self.log_step(rec_id, f"Phase 2/3: Vision model analysis & Project classification (item {idx + 1}/{N} in batch)")
 
@@ -527,7 +582,11 @@ class BulkProcessor:
                     use_gemini = (settings_store.get("provider") == "gemini" and is_internet_online())
 
                     if use_gemini:
-                        self.log_step(rec_id, "Running combined Gemini OCR and Vision analysis...")
+                        cached_ocr = meta.get("ocr_text")
+                        if cached_ocr:
+                            self.log_step(rec_id, "Running Gemini Vision analysis with pre-extracted OCR text...")
+                        else:
+                            self.log_step(rec_id, "Running combined Gemini OCR and Vision analysis...")
                         existing_tags = db.get_all_unique_tags()
                         if len(existing_tags) > 100:
                             existing_tags = existing_tags[:100]
@@ -536,9 +595,10 @@ class BulkProcessor:
                                 img_path=img_path,
                                 full_img_path=full_img_path if full_img_path.exists() else None,
                                 projects=projects,
-                                existing_tags=existing_tags
+                                existing_tags=existing_tags,
+                                ocr_text=cached_ocr if cached_ocr else None
                             )
-                            meta["ocr_text"] = res.get("ocr_text", "")
+                            meta["ocr_text"] = res.get("ocr_text", "") or cached_ocr or ""
                             meta["description"] = res.get("description", "No description generated.")
                             meta["tags"] = res.get("tags", [])
                             meta["project_number"] = res.get("project_number", "None")
@@ -669,18 +729,13 @@ class BulkProcessor:
 
                     # --- Stage 3: Project Classification ---
                     project_number = "None"
-                    query_vector = []
                     try:
                         self.log_step(rec_id, "Stage 3/6: Retrieving semantic neighbor context & running Project Classification...")
-                        # Compute quick query vector using generated active window description & OCR text
-                        query_text = f"Description: {active_window_description}\n\nExtracted Screen Text:\n{truncated_ocr}"
-                        query_vector = self.get_ollama_embedding(query_text, img_path=str(img_path), rec_id=rec_id)
 
-                        # Query historically similar snapshots
-                        similar_snapshots = db.get_similar_labeled_snapshots(
-                            vector=query_vector,
-                            tags=None,
+                        # Query historically similar snapshots using metadata overlap instead of vector embeddings to prevent model swapping
+                        similar_snapshots = db.get_similar_labeled_snapshots_by_metadata(
                             app_name=meta.get("app_name"),
+                            window_title=meta.get("window_title"),
                             limit=5
                         )
                         similar_snapshots_str = json.dumps(similar_snapshots, indent=2, ensure_ascii=False)
@@ -844,7 +899,6 @@ You must respond in valid JSON format matching this schema:
                     meta["tags"] = tags
                     meta["project_number"] = project_number
                     meta["unique_things"] = unique_things
-                    meta["vector"] = query_vector
 
                     # Persist results to metadata JSON file on disk
                     with open(meta_path, "w", encoding="utf-8") as f:
@@ -852,14 +906,19 @@ You must respond in valid JSON format matching this schema:
                 else:
                     self.log_step(rec_id, "Vision analysis results already cached in metadata. Skipping vision model.")
             except Exception as e:
-                self.log_step(rec_id, f"Error in Phase 2 (Vision) for {img_path.name}: {e}")
+                self.log_step(rec_id, f"Error in Phase 2 (Vision) for {img_path.name}: {e}\n{traceback.format_exc()}")
                 failed_ids.add(rec_id)
+                with self.lock:
+                    self.last_error = f"Phase 2 error for {rec_id}: {e}"
 
         # -------------------------------------------------------------
         # Phase 3: Embeddings & DB Commit Sweep
         # -------------------------------------------------------------
         success_count = 0
         for idx, (img_path, meta_path, rec_id, meta) in enumerate(batch_items):
+            with self.lock:
+                self.current_rec_id = rec_id
+                self.current_stage = f"Phase 3/3 (Database Commit): Item {self.current_batch_processed + 1}/{self.current_batch_total}"
             try:
                 if rec_id in failed_ids:
                     self.log_step(rec_id, "Skipping Phase 3/3 due to previous failures in Phase 2.")
@@ -877,45 +936,13 @@ You must respond in valid JSON format matching this schema:
                 embedding = meta.get("vector")
                 if not embedding or len(embedding) == 0:
                     embedding_text = f"Description: {description}\n\nExtracted Screen Text:\n{ocr_text}"
-                    embedding = []
-
-                    from aw_vision.settings import settings_store
-                    from aw_vision.gemini import generate_gemini_embedding, is_internet_online
-                    use_gemini = (settings_store.get("provider") == "gemini" and is_internet_online())
-
-                    if use_gemini:
-                        self.log_step(rec_id, f"Generating Gemini semantic embedding using '{settings_store.get('gemini_embedding_model')}'...")
-                        try:
-                            embedding = generate_gemini_embedding(embedding_text, img_path=str(img_path))
-                        except Exception as eg_emb:
-                            self.log_step(rec_id, f"Error generating Gemini embedding: {eg_emb}. Falling back to Ollama.")
-
-                    # If Gemini embedding failed or provider is Ollama
-                    if not embedding:
-                        model = settings_store.get("ollama_embedding_model") or config.embedding_model
-                        self.log_step(rec_id, f"Generating local semantic embedding using '{model}'...")
-                        # Keep embedding model loaded during the sweep, unload on the very last item of Phase 3
-                        keep_alive = 0 if (idx == N - 1) else 300
-                        try:
-                            url = f"{config.ollama_host}/api/embeddings"
-                            payload = {"model": model, "prompt": embedding_text, "keep_alive": keep_alive}
-                            resp = requests.post(url, json=payload, timeout=30.0)
-                            if resp.status_code == 200:
-                                embedding = resp.json().get("embedding", [])
-                        except Exception as ee:
-                            self.log_step(rec_id, f"Error generating embedding from Ollama: {ee}")
-
-                # Enforce dynamic expected dimension to avoid LanceDB dimension mismatch errors
-                expected_dim = db.get_embedding_dimension()
-                if not embedding:
-                    embedding = [0.0] * expected_dim
-                else:
-                    if len(embedding) < expected_dim:
-                        self.log_step(rec_id, f"Correction: Padding generated vector from {len(embedding)} to {expected_dim} to match DB layout.")
-                        embedding = list(embedding) + [0.0] * (expected_dim - len(embedding))
-                    elif len(embedding) > expected_dim:
-                        self.log_step(rec_id, f"Correction: Truncating generated vector from {len(embedding)} to {expected_dim} to match DB layout.")
-                        embedding = list(embedding)[:expected_dim]
+                    keep_alive = 0 if (idx == N - 1) else 300
+                    embedding = self.get_embedding(
+                        embedding_text,
+                        img_path=str(img_path),
+                        rec_id=rec_id,
+                        keep_alive=keep_alive
+                    )
 
                 # Build database record
                 db_record = {
@@ -968,6 +995,8 @@ You must respond in valid JSON format matching this schema:
             except Exception as e:
                 err_msg = f"Error in Phase 3 (Embedding/Commit) for {img_path.name}: {e}"
                 self.log_step(rec_id, err_msg)
+                with self.lock:
+                    self.last_error = f"Phase 3 error for {rec_id}: {e}"
                 try:
                     log_file = img_path.parent / f"{rec_id}.log"
                     with open(log_file, "w", encoding="utf-8") as lf:
@@ -975,6 +1004,9 @@ You must respond in valid JSON format matching this schema:
                 except Exception as le:
                     print(f"Error saving raw log file: {le}")
                 traceback.print_exc()
+            finally:
+                with self.lock:
+                    self.current_batch_processed += 1
 
         return success_count > 0
 

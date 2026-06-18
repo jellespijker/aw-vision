@@ -8,7 +8,9 @@ import {
   RefreshCw,
   Server,
   CheckCircle,
-  Clock
+  Clock,
+  Loader2,
+  AlertTriangle
 } from 'lucide-react'
 import type { DaemonStatus } from '../types'
 
@@ -132,6 +134,70 @@ export const PipelineTab: React.FC<PipelineTabProps> = ({
                 </div>
               </div>
 
+              {/* Active Sweep Ingestion Progress Panel */}
+              {status.is_processing && (
+                <div className="bg-primary/5 border border-primary/10 rounded-lg p-4 space-y-3 relative overflow-hidden backdrop-blur-md">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                      </span>
+                      <span className="text-body-sm font-bold text-neutral-dark font-sans">
+                        Active Ingestion Sweep
+                      </span>
+                    </div>
+                    <span className="text-technical-sm font-mono font-semibold text-primary">
+                      {Math.round(
+                        (((status.current_batch_processed || 0) / (status.current_batch_total || 1)) * 100)
+                      )}
+                      %
+                    </span>
+                  </div>
+
+                  <div className="w-full h-2 bg-surface-container rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-300"
+                      style={{
+                        width: `${
+                          (((status.current_batch_processed || 0) / (status.current_batch_total || 1)) * 100)
+                        }%`
+                      }}
+                    ></div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 text-body-sm text-text-secondary">
+                    <div className="flex justify-between items-start gap-4">
+                      <span className="font-medium text-neutral-dark flex items-center gap-1.5 font-sans">
+                        <Loader2 className="w-3.5 h-3.5 text-primary animate-spin shrink-0" />
+                        {status.current_stage || "Processing batch item..."}
+                      </span>
+                      <span className="text-technical-sm font-mono shrink-0">
+                        {status.current_batch_processed} / {status.current_batch_total} files
+                      </span>
+                    </div>
+                    {status.current_rec_id && (
+                      <div className="flex items-center gap-1.5 text-technical-sm font-mono mt-0.5">
+                        <span className="text-text-secondary">Active ID:</span>
+                        <span className="bg-surface-container-low text-neutral-dark px-1.5 py-0.5 rounded border border-surface-container-high">
+                          {status.current_rec_id}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {status.last_error && (
+                    <div className="bg-danger-surface border border-danger-primary/30 text-danger-primary dark:bg-danger-primary/10 dark:border-danger-primary/30 p-2.5 rounded text-technical-sm flex items-start gap-2 mt-1 font-sans">
+                      <AlertTriangle className="w-4 h-4 text-danger-primary shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <strong className="font-semibold">Last Ingestion Warning:</strong>{" "}
+                        <span className="font-mono text-technical-sm break-all">{status.last_error}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Force process */}
               {status.pending_queue_size > 0 && (
                 <div className="pt-2 border-t border-surface-container-high flex flex-col md:flex-row md:items-center gap-4 justify-between">
@@ -141,11 +207,20 @@ export const PipelineTab: React.FC<PipelineTabProps> = ({
                   <button
                     type="button"
                     onClick={handleProcessAll}
-                    disabled={bulkProcessing}
-                    className="bg-accent-surface hover:bg-surface-container text-primary text-action-md font-bold py-2.5 px-4 rounded border border-primary/20 transition-colors select-none flex items-center justify-center gap-2 cursor-pointer h-10 shrink-0"
+                    disabled={bulkProcessing || status.is_processing}
+                    className="bg-accent-surface hover:bg-surface-container text-primary text-action-md font-bold py-2.5 px-4 rounded border border-primary/20 transition-colors select-none flex items-center justify-center gap-2 cursor-pointer h-10 shrink-0 disabled:opacity-50"
                   >
-                    <Cpu className={`w-4 h-4 ${bulkProcessing ? 'animate-spin' : ''}`} />
-                    Force Sweep Queue
+                    {bulkProcessing || status.is_processing ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Processing Ingestion Queue...
+                      </>
+                    ) : (
+                      <>
+                        <Cpu className="w-4 h-4" />
+                        Force Sweep Queue
+                      </>
+                    )}
                   </button>
                 </div>
               )}
@@ -261,11 +336,20 @@ export const PipelineTab: React.FC<PipelineTabProps> = ({
                 <button
                   type="button"
                   onClick={handleBulkReprocessSidebar}
-                  disabled={reprocessing || bulkProcessing}
+                  disabled={reprocessing || bulkProcessing || status.is_processing}
                   className="w-full bg-inverse-surface hover:opacity-90 text-inverse-on-surface text-action-md font-semibold h-11 rounded border border-inverse-surface transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
-                  <RefreshCw className={`w-4 h-4 ${reprocessing || bulkProcessing ? 'animate-spin' : ''}`} />
-                  {reprocessing ? 'Reprocessing...' : 'Trigger Sweep Now'}
+                  {reprocessing || bulkProcessing || status.is_processing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {reprocessing ? 'Queueing Reprocess...' : 'Running Sweep...'}
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      Trigger Sweep Now
+                    </>
+                  )}
                 </button>
 
                 <div className="p-3 bg-surface-container-low rounded border border-surface-container-high text-technical-sm text-text-secondary leading-normal font-mono">

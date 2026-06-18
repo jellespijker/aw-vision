@@ -152,7 +152,7 @@ def tool_search_screenshots_semantic(query: str, limit: int = 5) -> str:
     try:
         # Step 1: Embed query dynamically based on the active provider
         from aw_vision.processor import processor
-        query_vector = processor.get_ollama_embedding(query)
+        query_vector = processor.get_embedding(query)
         if not query_vector or all(v == 0.0 for v in query_vector):
             return "Error: Failed to generate query embedding vector."
 
@@ -261,7 +261,7 @@ def tool_get_similar_labeled_snapshots(query: str, limit: int = 5) -> str:
     try:
         # Step 1: Embed query dynamically based on the active provider
         from aw_vision.processor import processor
-        query_vector = processor.get_ollama_embedding(query)
+        query_vector = processor.get_embedding(query)
         if not query_vector or all(v == 0.0 for v in query_vector):
             return "Error: Failed to generate query embedding vector."
 
