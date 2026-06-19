@@ -450,6 +450,54 @@ export default function App() {
     }
   }
 
+  const handleSaveProject = async (project: Project) => {
+    if (!serverOnline) return
+    setSavingProjects(true)
+    try {
+      const resp = await axios.post('/api/projects', project)
+      if (resp.data.status === 'success') {
+        setToastMessage({ text: `Project '${project.project_number}' saved successfully!`, type: 'success' })
+        await fetchProjects()
+      }
+    } catch (e: any) {
+      setToastMessage({ text: `Failed to save project: ${e.response?.data?.detail || e.message}`, type: 'danger' })
+    } finally {
+      setSavingProjects(false)
+    }
+  }
+
+  const handleDeleteProject = async (projectNumber: string) => {
+    if (!serverOnline) return
+    setSavingProjects(true)
+    try {
+      const resp = await axios.delete(`/api/projects/${projectNumber}`)
+      if (resp.data.status === 'success') {
+        setToastMessage({ text: `Project '${projectNumber}' deleted successfully.`, type: 'success' })
+        await fetchProjects()
+      }
+    } catch (e: any) {
+      setToastMessage({ text: `Failed to delete project: ${e.response?.data?.detail || e.message}`, type: 'danger' })
+    } finally {
+      setSavingProjects(false)
+    }
+  }
+
+  const handleToggleProjectActive = async (projectNumber: string) => {
+    if (!serverOnline) return
+    setSavingProjects(true)
+    try {
+      const resp = await axios.patch(`/api/projects/${projectNumber}/toggle-active`)
+      if (resp.data.status === 'success') {
+        setToastMessage({ text: resp.data.message, type: 'success' })
+        await fetchProjects()
+      }
+    } catch (e: any) {
+      setToastMessage({ text: `Failed to toggle project status: ${e.response?.data?.detail || e.message}`, type: 'danger' })
+    } finally {
+      setSavingProjects(false)
+    }
+  }
+
   const handleUpdateLabel = async (recordId: string, projectNumber: string | null) => {
     if (!serverOnline) return
     try {
@@ -521,6 +569,10 @@ export default function App() {
     } finally {
       setQuerying(false)
     }
+  }
+
+  const clearChat = () => {
+    setChatMessages([])
   }
 
   const openImageLightbox = async (rec: HistoryRecord) => {
@@ -615,6 +667,7 @@ export default function App() {
               {activeTab === 'chat' && (
                 <AgentTab
                   chatMessages={chatMessages}
+                  clearChat={clearChat}
                   querying={querying}
                   agentPrompt={agentPrompt}
                   setAgentPrompt={setAgentPrompt}
@@ -667,6 +720,9 @@ export default function App() {
                   setProjectsJsonInput={setProjectsJsonInput}
                   saveProjectsJson={saveProjectsJson}
                   savingProjects={savingProjects}
+                  onSaveProject={handleSaveProject}
+                  onDeleteProject={handleDeleteProject}
+                  onToggleProjectActive={handleToggleProjectActive}
                 />
               )}
 

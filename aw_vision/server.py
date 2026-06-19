@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import psutil
 from fastapi import Body, FastAPI, HTTPException
@@ -64,6 +64,8 @@ class ProjectModel(BaseModel):
     project_number: str
     description: str
     work_entailment: str
+    is_active: bool = True
+    created_at: Optional[float] = None
 
 
 class LabelRequest(BaseModel):
@@ -163,6 +165,17 @@ def get_status():
     }
 
 
+@app.get("/api/stats/processing")
+def get_processing_stats():
+    """Get mean, min, and max processing times for each screenshot processing phase."""
+    try:
+        from aw_vision.db import db
+        return db.get_processing_stats()
+    except Exception as e:
+        print(f"Error computing processing stats: {e}")
+        return {}
+
+
 @app.post("/api/query")
 def post_query(request: QueryRequest):
     """Run conversational queries using the LangGraph ReAct Agent."""
@@ -231,7 +244,7 @@ def get_screenshot(filename: str):
 @app.get("/api/projects")
 def get_projects():
     """Retrieve lists of configured projects and total tracked hours per project."""
-    projects_list = config.load_projects()
+    projects_list = db.load_projects(include_inactive=True)
     stats = db.get_project_statistics()
 
     # Merge statistics with list
@@ -241,12 +254,13 @@ def get_projects():
         enriched.append({**p, "tracked_hours": round(stats.get(p_num, 0.0), 2)})
 
     # Append unclassified/none stats
-    if "None" in stats:
+    if "None" in stats or len(enriched) > 0:
         enriched.append(
             {
                 "project_number": "Unclassified",
                 "description": "Activities not mapped to any specific project guidelines",
                 "work_entailment": "General work, browsing, or unclassified screen states.",
+                "is_active": True,
                 "tracked_hours": round(stats.get("None", 0.0), 2),
             }
         )
@@ -255,17 +269,174 @@ def get_projects():
 
 
 @app.post("/api/projects")
-def save_projects(projects: List[ProjectModel]):
-    """Update projects configuration list."""
+def save_projects(projects: Union[ProjectModel, List[ProjectModel]]):
+    """Add or update projects."""
     try:
-        data = [p.dict() for p in projects]
-        config.save_projects(data)
+        if isinstance(projects, list):
+            data = [p.dict() for p in projects]
+            config.save_projects(data)
+            num = len(projects)
+        else:
+            data = [projects.dict()]
+            config.save_projects(data)
+            num = 1
         return {
             "status": "success",
-            "message": f"Successfully updated {len(projects)} projects.",
+            "message": f"Successfully updated {num} project(s).",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save projects: {e}")
+
+
+@app.delete("/api/projects/{project_number}")
+def delete_project(project_number: str):
+    """Delete a project from LanceDB."""
+    try:
+        db.delete_project(project_number)
+        return {"status": "success", "message": f"Project '{project_number}' successfully deleted."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete project: {e}")
+
+
+@app.patch("/api/projects/{project_number}/toggle-active")
+def toggle_project_active(project_number: str):
+    """Toggle the active status of a project."""
+    try:
+        new_status = db.toggle_project_active(project_number)
+        return {
+            "status": "success",
+            "is_active": new_status,
+            "message": f"Project '{project_number}' is now {'active' if new_status else 'inactive'}."
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to toggle project status: {e}")
+
+
+@app.post("/api/projects/suggest")
+def suggest_projects():
+    """Analyze recent unclassified screenshots and generate AI suggested projects."""
+    try:
+        from aw_vision.settings import settings_store
+        import json
+        import requests
+
+        # 1. Fetch up to 100 recent unclassified screenshots
+        where_clause = "project_number IS NULL OR project_number = 'None' OR project_number = ''"
+        unclassified = db.query_metadata(where_clause, limit=100)
+
+        if not unclassified:
+            return {
+                "status": "success",
+                "suggestions": [],
+                "message": "No unclassified screenshots found to generate suggestions."
+            }
+
+        # 2. Compile activity details to form the prompt
+        activities = []
+        for r in unclassified:
+            app_name = r.get("app_name") or "Unknown App"
+            title = r.get("window_title") or "Untitled Window"
+            desc = r.get("description") or ""
+            unique = r.get("unique_things") or ""
+            act_str = f"- App: {app_name} | Window: {title}"
+            if desc:
+                act_str += f" | Description: {desc}"
+            if unique:
+                act_str += f" | Unique Elements: {unique}"
+            activities.append(act_str)
+
+        activities_text = "\n".join(activities)
+
+        prompt = f"""
+Analyze the following list of active, unclassified computer activities from the user's historical screen tracking.
+Group or cluster these activities into 2 to 4 potential high-level work projects. Each suggested project must follow the professional work styles and guidelines of the user's existing projects.
+
+Each suggested project must include:
+1. `project_number`: A descriptive, short, uppercase code matching the user's standard style (e.g., "DEV - [Project Name]" or "RESEARCH - [Project Name]").
+2. `description`: A clear, professional summary of the project's purpose and context.
+3. `work_entailment`: A detailed description of the tasks, files, tools, or workflows that are part of this project.
+
+Here is the list of recent unclassified activities:
+{activities_text}
+
+You must respond in valid JSON format matching this exact schema:
+{{
+  "suggestions": [
+    {{
+      "project_number": "string",
+      "description": "string",
+      "work_entailment": "string"
+    }}
+  ]
+}}
+"""
+
+        # 3. Determine provider
+        provider = settings_store.get("provider")
+        suggestions_data = []
+
+        if provider == "gemini":
+            from aw_vision.gemini import is_internet_online, _get_resolved_llm_model, gemini_request_with_retry
+            if is_internet_online():
+                key = settings_store.get("gemini_api_key")
+                model = settings_store.get("gemini_llm_model")
+                model = _get_resolved_llm_model(model)
+                if not key:
+                    raise HTTPException(status_code=400, detail="Gemini API key is not configured.")
+
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"responseMimeType": "application/json"}
+                }
+                resp = gemini_request_with_retry("POST", url, json_data=payload, timeout=60.0)
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    text_output = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                    parsed = json.loads(text_output)
+                    suggestions_data = parsed.get("suggestions", [])
+            else:
+                # Fallback to Ollama if offline
+                provider = "ollama"
+
+        if provider != "gemini":
+            # Call Ollama
+            from aw_vision.settings import settings_store
+            model = settings_store.get("ollama_vision_model") or config.vision_model
+            url = f"{config.ollama_host}/api/generate"
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.2, "num_ctx": 8192},
+                "keep_alive": 0,
+            }
+            resp = requests.post(url, json=payload, timeout=60.0)
+            if resp.status_code == 200:
+                text_output = resp.json().get("response", "").strip()
+                parsed = json.loads(text_output)
+                suggestions_data = parsed.get("suggestions", [])
+            else:
+                raise HTTPException(status_code=500, detail=f"Ollama suggestions generation failed: {resp.status_code} - {resp.text}")
+
+        # Ensure all suggestions have is_active = True
+        for sugg in suggestions_data:
+            sugg["is_active"] = True
+
+        return {
+            "status": "success",
+            "suggestions": suggestions_data,
+            "message": f"Successfully generated {len(suggestions_data)} suggested projects based on unclassified activities."
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to generate project suggestions: {e}")
 
 
 RESOLUTION_MAP = {

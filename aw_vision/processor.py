@@ -511,6 +511,7 @@ class BulkProcessor:
                 self.current_rec_id = rec_id
                 self.current_stage = f"Phase 1/3 (OCR Extraction): Item {self.current_batch_processed + idx + 1}/{self.current_batch_total}"
             try:
+                ocr_start = time.time()
                 self.log_step(rec_id, f"Phase 1/3: Image Optimization & OCR extraction (item {idx + 1}/{N} in batch)")
 
                 # Image optimization
@@ -531,11 +532,13 @@ class BulkProcessor:
 
                     if provider == "gemini" and ocr_provider == "gemini" and internet_online:
                         self.log_step(rec_id, "Both main and OCR providers are Gemini & online. Skipping Phase 1 OCR; will run combined Gemini OCR + Vision in Phase 2.")
+                        meta["duration_ocr"] = 0.0
                     elif ocr_provider == "gemini" and internet_online:
                         self.log_step(rec_id, "Running Cloud OCR using Gemini...")
                         try:
                             ocr_text = run_gemini_ocr(img_path)
                             meta["ocr_text"] = ocr_text
+                            meta["duration_ocr"] = time.time() - ocr_start
                             with open(meta_path, "w", encoding="utf-8") as f:
                                 json.dump(meta, f, indent=2)
                             self.log_step(rec_id, f"Cloud OCR complete. Length: {len(ocr_text)}")
@@ -544,6 +547,7 @@ class BulkProcessor:
                             keep_alive = 0 if (idx == N - 1) else 300
                             ocr_text = self.extract_ocr_text(img_path, rec_id, keep_alive=keep_alive)
                             meta["ocr_text"] = ocr_text
+                            meta["duration_ocr"] = time.time() - ocr_start
                             with open(meta_path, "w", encoding="utf-8") as f:
                                 json.dump(meta, f, indent=2)
                     else:
@@ -551,12 +555,15 @@ class BulkProcessor:
                         keep_alive = 0 if (idx == N - 1) else 300
                         ocr_text = self.extract_ocr_text(img_path, rec_id, keep_alive=keep_alive)
                         meta["ocr_text"] = ocr_text
+                        meta["duration_ocr"] = time.time() - ocr_start
 
                         # Persist ocr_text to the metadata JSON file on disk
                         with open(meta_path, "w", encoding="utf-8") as f:
                             json.dump(meta, f, indent=2)
                 else:
                     self.log_step(rec_id, "OCR text already cached in metadata JSON. Skipping OCR.")
+                    if "duration_ocr" not in meta:
+                        meta["duration_ocr"] = 0.0
             except Exception as e:
                 self.log_step(rec_id, f"Error in Phase 1 (OCR) for {img_path.name}: {e}")
                 with self.lock:
@@ -570,6 +577,7 @@ class BulkProcessor:
                 self.current_rec_id = rec_id
                 self.current_stage = f"Phase 2/3 (Vision Analysis): Item {self.current_batch_processed + idx + 1}/{self.current_batch_total}"
             try:
+                vision_start = time.time()
                 self.log_step(rec_id, f"Phase 2/3: Vision model analysis & Project classification (item {idx + 1}/{N} in batch)")
 
                 # Only run Vision if not already processed (meaning we don't have description)
@@ -604,6 +612,7 @@ class BulkProcessor:
                             meta["project_number"] = res.get("project_number", "None")
                             meta["unique_things"] = res.get("unique_things", "None detected.")
                             meta["vector"] = []  # Generated in Phase 3
+                            meta["duration_vision"] = time.time() - vision_start
 
                             # Persist results to metadata JSON file on disk
                             with open(meta_path, "w", encoding="utf-8") as f:
@@ -899,12 +908,15 @@ You must respond in valid JSON format matching this schema:
                     meta["tags"] = tags
                     meta["project_number"] = project_number
                     meta["unique_things"] = unique_things
+                    meta["duration_vision"] = time.time() - vision_start
 
                     # Persist results to metadata JSON file on disk
                     with open(meta_path, "w", encoding="utf-8") as f:
                         json.dump(meta, f, indent=2)
                 else:
                     self.log_step(rec_id, "Vision analysis results already cached in metadata. Skipping vision model.")
+                    if "duration_vision" not in meta:
+                        meta["duration_vision"] = 0.0
             except Exception as e:
                 self.log_step(rec_id, f"Error in Phase 2 (Vision) for {img_path.name}: {e}\n{traceback.format_exc()}")
                 failed_ids.add(rec_id)
@@ -935,6 +947,7 @@ You must respond in valid JSON format matching this schema:
 
                 embedding = meta.get("vector")
                 if not embedding or len(embedding) == 0:
+                    emb_start = time.time()
                     embedding_text = f"Description: {description}\n\nExtracted Screen Text:\n{ocr_text}"
                     keep_alive = 0 if (idx == N - 1) else 300
                     embedding = self.get_embedding(
@@ -943,6 +956,16 @@ You must respond in valid JSON format matching this schema:
                         rec_id=rec_id,
                         keep_alive=keep_alive
                     )
+                    meta["duration_embedding"] = time.time() - emb_start
+                else:
+                    if "duration_embedding" not in meta:
+                        meta["duration_embedding"] = 0.0
+
+                duration_ocr = meta.get("duration_ocr", 0.0)
+                duration_vision = meta.get("duration_vision", 0.0)
+                duration_embedding = meta.get("duration_embedding", 0.0)
+                duration_total = duration_ocr + duration_vision + duration_embedding
+                meta["duration_total"] = duration_total
 
                 # Build database record
                 db_record = {
@@ -959,6 +982,10 @@ You must respond in valid JSON format matching this schema:
                     "human_labeled": False,
                     "unique_things": meta.get("unique_things"),
                     "vector": embedding,
+                    "duration_ocr": meta.get("duration_ocr"),
+                    "duration_vision": meta.get("duration_vision"),
+                    "duration_embedding": meta.get("duration_embedding"),
+                    "duration_total": meta.get("duration_total"),
                 }
 
                 # Commit to database

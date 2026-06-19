@@ -54,6 +54,8 @@ export interface Project {
   description: string
   work_entailment: string
   tracked_hours: number
+  is_active?: boolean
+  created_at?: number
 }
 
 export interface TimelineEntry {
@@ -86,3 +88,18 @@ export interface ProjectsTimelineResponse {
   projects: ProjectTimeline[]
   timeline_headers: TimelineHeader[]
 }
+
+export interface PhaseStats {
+  mean: number
+  min: number
+  max: number
+  count: number
+}
+
+export interface ProcessingStats {
+  ocr: PhaseStats
+  vision: PhaseStats
+  embedding: PhaseStats
+  total: PhaseStats
+}
+

@@ -134,6 +134,7 @@ cygdb
 !**/package-lock.json
 !**/tsconfig*.json
 projects.json
+projects.json.bak
 !projects.json.example
 
 # Development Helper Tracking Files (Agent Artifacts)
