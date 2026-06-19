@@ -25,8 +25,6 @@ def _get_resolved_llm_model(model_name: str) -> str:
         "gemini-2.0-flash-001",
         "gemini-flash-latest",
         "gemini-flash-lite-latest",
-        "gemma-4-26b-a4b-it",
-        "gemma-4-31b-it",
     ):
         print(f"[Gemini Model Resolver] Resolving model '{model_name}' to 'gemini-2.5-flash' for cloud processing.")
         return "gemini-2.5-flash"

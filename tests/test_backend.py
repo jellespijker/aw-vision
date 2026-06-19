@@ -17,6 +17,12 @@ client = TestClient(app)
 
 def test_config_defaults():
     """Verify config falls back to safe defaults and expands paths."""
+    print("ENV LANCE_DB_DIR:", os.environ.get("LANCE_DB_DIR"))
+    print("CONFIG DB DIR:", config.db_dir)
+    from aw_vision.settings import settings_store
+    print("SETTINGS STORE DB CONNECTION:", settings_store._db_conn)
+    print("SETTINGS STORE CACHE:", settings_store._cache)
+    print("SETTINGS INTERVAL SECONDS:", settings_store.get("screenshot_interval_seconds"))
     assert config.screenshot_interval == 60
     assert config.cpu_threshold == 80.0
     assert config.memory_threshold == 90.0
@@ -25,8 +31,10 @@ def test_config_defaults():
 
 def test_projects_loading(tmp_path):
     """Test loading and saving projects list."""
-    test_projects_file = tmp_path / "test_projects.json"
-    config.settings["projects_file"] = str(test_projects_file)
+    try:
+        db.delete_project("PRJ-TEST")
+    except Exception:
+        pass
 
     test_data = [
         {
@@ -38,8 +46,15 @@ def test_projects_loading(tmp_path):
     config.save_projects(test_data)
 
     loaded = config.load_projects()
-    assert len(loaded) == 1
-    assert loaded[0]["project_number"] == "PRJ-TEST"
+    saved = next((p for p in loaded if p["project_number"] == "PRJ-TEST"), None)
+    assert saved is not None
+    assert saved["description"] == "Test Project"
+
+    # Clean up
+    try:
+        db.delete_project("PRJ-TEST")
+    except Exception:
+        pass
 
 
 def test_db_operations():
@@ -361,3 +376,48 @@ def test_get_projects_timeline_api():
                 table.delete(f"id = '{tid}'")
             except Exception:
                 pass
+
+
+def test_project_crud_endpoints():
+    """Verify delete, save/add single project, and toggle-active endpoints."""
+    # 1. Add/Save a project
+    new_project = {
+        "project_number": "PRJ-ENDPOINT-TEST",
+        "description": "Endpoint CRUD verification",
+        "work_entailment": "Running unit tests",
+        "is_active": True
+    }
+    resp = client.post("/api/projects", json=new_project)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+
+    # 2. Toggle active state
+    resp = client.patch("/api/projects/PRJ-ENDPOINT-TEST/toggle-active")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+    assert resp.json()["is_active"] is False
+
+    # 3. Retrieve projects and confirm it is present and inactive
+    resp = client.get("/api/projects")
+    assert resp.status_code == 200
+    projects = resp.json()["projects"]
+    saved_proj = next((p for p in projects if p["project_number"] == "PRJ-ENDPOINT-TEST"), None)
+    assert saved_proj is not None
+    assert saved_proj["is_active"] is False
+
+    # 4. Toggle active back to True
+    resp = client.patch("/api/projects/PRJ-ENDPOINT-TEST/toggle-active")
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is True
+
+    # 5. Delete project
+    resp = client.delete("/api/projects/PRJ-ENDPOINT-TEST")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "success"
+
+    # 6. Retrieve projects and confirm it is gone
+    resp = client.get("/api/projects")
+    assert resp.status_code == 200
+    projects = resp.json()["projects"]
+    deleted_proj = next((p for p in projects if p["project_number"] == "PRJ-ENDPOINT-TEST"), None)
+    assert deleted_proj is None

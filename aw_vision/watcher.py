@@ -170,10 +170,66 @@ class ScreenshotWatcher:
 
         return window_title, app_name, is_afk, bucket_context
 
+    def _is_audio_active(self) -> bool:
+        """Check if any audio stream (playback or capture) is actively running under PipeWire."""
+        try:
+            res = subprocess.run(
+                ["wpctl", "status"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            if res.returncode != 0:
+                return False
+
+            lines = res.stdout.splitlines()
+            audio_section = False
+            streams_section = False
+
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                # Top-level sections in wpctl status are not indented
+                if not line.startswith(" ") and not line.startswith("└─") and not line.startswith("├─"):
+                    if stripped == "Audio":
+                        audio_section = True
+                    else:
+                        audio_section = False
+                    streams_section = False
+                    continue
+
+                if audio_section:
+                    if "Streams:" in stripped:
+                        streams_section = True
+                        continue
+                    if streams_section and "[active]" in stripped:
+                        return True
+        except Exception as e:
+            print(f"Error checking audio stream status: {e}")
+        return False
+
     def capture_cycle(self):
         """Main screenshot and context capture iteration."""
         # 1. Gather context first to check if the user is active
         window_title, app_name, is_afk, bucket_context = self.fetch_active_window_and_afk()
+
+        # Check if in a call or watching a video to bypass AFK suspension
+        title_lower = window_title.lower()
+        app_lower = app_name.lower()
+        call_video_keywords = [
+            "meet.google.com", "teams.microsoft.com", "zoom", "webex", "skype",
+            "discord", "slack", "youtube", "netflix", "vlc", "mpv", "plex",
+            "twitch", "disney+", "prime video", "hbo", "spotify", "soundcloud",
+            "call", "meeting", "video", "conference", "webinar", "stream",
+        ]
+        has_keyword_match = any(kw in title_lower or kw in app_lower for kw in call_video_keywords)
+        audio_active = self._is_audio_active()
+
+        if is_afk and (has_keyword_match or audio_active):
+            print(f"[{datetime.now()}] User is AFK, but active call/video detected (Audio active: {audio_active}, Metadata match: {has_keyword_match}). Bypassing AFK sleep.")
+            is_afk = False
 
         if is_afk:
             print(f"[{datetime.now()}] User is AFK. Skipping screenshot capture cycle. Triggering bulk processing.")

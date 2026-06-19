@@ -12,7 +12,8 @@ import {
   CornerDownLeft,
   Paperclip,
   CheckCircle2,
-  Terminal
+  Terminal,
+  Trash2
 } from 'lucide-react'
 import type { ChatMessage, HistoryRecord, Project, DaemonStatus } from '../types'
 
@@ -27,6 +28,7 @@ interface AgentTabProps {
   openImageLightbox: (rec: HistoryRecord) => void
   API_BASE: string
   status: DaemonStatus | null
+  clearChat: () => void
 }
 
 export const AgentTab: React.FC<AgentTabProps> = ({
@@ -39,7 +41,8 @@ export const AgentTab: React.FC<AgentTabProps> = ({
   projectsList,
   openImageLightbox,
   API_BASE,
-  status
+  status,
+  clearChat
 }) => {
   const chatLogsRef = useRef<HTMLDivElement>(null)
 
@@ -165,7 +168,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
     )
   }
 
-  const renderMessageContent = (text: string) => {
+  const renderMessageContent = (text: string, isUser: boolean) => {
     if (!text) return null
 
     const parts = text.split(/(```[\s\S]*?```)/g)
@@ -180,10 +183,16 @@ export const AgentTab: React.FC<AgentTabProps> = ({
             return (
               <pre
                 key={index}
-                className="bg-surface-container-low text-neutral-dark p-4 rounded-lg my-3 text-technical-sm overflow-x-auto border border-surface-container-high font-mono"
+                className={`p-4 rounded-lg my-3 text-technical-sm overflow-x-auto border font-mono ${
+                  isUser
+                    ? 'bg-white/10 text-white border-white/20'
+                    : 'bg-surface-container-low text-neutral-dark border-surface-container-high'
+                }`}
               >
                 {lang && (
-                  <div className="text-[10px] text-text-secondary font-messina font-semibold uppercase tracking-wider mb-2 border-b border-surface-container-high pb-1">
+                  <div className={`text-[10px] font-messina font-semibold uppercase tracking-wider mb-2 border-b pb-1 ${
+                    isUser ? 'text-white/60 border-white/20' : 'text-text-secondary border-surface-container-high'
+                  }`}>
                     {lang}
                   </div>
                 )}
@@ -200,7 +209,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
             const lineElements = tokens.map((token, tIdx) => {
               if (token.startsWith('**') && token.endsWith('**')) {
                 return (
-                  <strong key={tIdx} className="font-semibold text-neutral-dark">
+                  <strong key={tIdx} className={`font-semibold ${isUser ? 'text-white font-bold' : 'text-neutral-dark'}`}>
                     {token.slice(2, -2)}
                   </strong>
                 )
@@ -209,7 +218,11 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                 return (
                   <code
                     key={tIdx}
-                    className="bg-surface-container text-danger-primary px-1.5 py-0.5 rounded font-mono text-technical-sm border border-surface-container-high"
+                    className={`px-1.5 py-0.5 rounded font-mono text-technical-sm border ${
+                      isUser
+                        ? 'bg-white/10 text-white border-white/20'
+                        : 'bg-surface-container text-danger-primary border-surface-container-high'
+                    }`}
                   >
                     {token.slice(1, -1)}
                   </code>
@@ -221,7 +234,9 @@ export const AgentTab: React.FC<AgentTabProps> = ({
             return (
               <p
                 key={lIdx}
-                className={`leading-relaxed text-body-md text-neutral-dark ${
+                className={`leading-relaxed text-body-md ${
+                  isUser ? 'text-white font-normal' : 'text-neutral-dark'
+                } ${
                   lIdx === lines.length - 1 ? 'mb-0' : 'mb-2'
                 }`}
               >
@@ -287,6 +302,17 @@ export const AgentTab: React.FC<AgentTabProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
+            {chatMessages.length > 0 && (
+              <button
+                type="button"
+                onClick={clearChat}
+                className="inline-flex items-center gap-1.5 text-[10px] font-semibold font-mono text-danger-primary bg-danger-primary/10 hover:bg-danger-primary/20 px-2.5 py-1 rounded border border-danger-primary/15 transition-all select-none cursor-pointer"
+                title="Clear Chat History"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Clear Chat</span>
+              </button>
+            )}
             <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold font-mono text-success-green bg-success-green/10 px-2.5 py-1 rounded border border-success-green/15">
               <CheckCircle2 className="w-3 h-3" /> AG-UI Connected
             </span>
@@ -365,7 +391,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                   <div
                     className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 border select-none ${
                       isUser
-                        ? 'bg-primary border-primary text-on-primary'
+                        ? 'bg-primary border-primary text-white dark:bg-primary-container dark:border-primary-container dark:text-white'
                         : 'bg-surface-container-lowest border-surface-container-high text-primary'
                     }`}
                   >
@@ -374,7 +400,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                   <div
                     className={`p-4 rounded-2xl text-body-md border transition-all ${
                       isUser
-                        ? 'bg-primary border-primary text-on-primary rounded-tr-none shadow-none'
+                        ? 'bg-primary border-primary text-white dark:bg-primary-container dark:border-primary-container dark:text-white rounded-tr-none shadow-none'
                         : 'bg-surface-container-lowest border-surface-container-high text-neutral-dark rounded-tl-none shadow-none'
                     }`}
                   >
@@ -383,7 +409,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                     }`}>
                       {isUser ? 'You' : 'Memory Agent'}
                     </div>
-                    <div>{renderMessageContent(msg.content)}</div>
+                    <div>{renderMessageContent(msg.content, isUser)}</div>
                   </div>
                 </div>
               )
