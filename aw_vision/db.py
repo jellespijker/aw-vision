@@ -138,6 +138,26 @@ class VisionDB:
             ]
         )
 
+    def _resolve_record_image_paths(self, records: list) -> list:
+        """Resolve on-disk processed image paths for a batch of records.
+
+        Returns one entry per record: an absolute path string when the screenshot still exists,
+        or None when it was never set or has been purged by the retention lifecycle.
+        """
+        processed_dir = config.screenshots_dir / "processed"
+        paths = []
+        for r in records:
+            image_path_str = r.get("image_path")
+            resolved = None
+            if image_path_str:
+                p = Path(image_path_str)
+                if not p.is_absolute():
+                    p = processed_dir / p.name
+                if p.exists():
+                    resolved = str(p)
+            paths.append(resolved)
+        return paths
+
     def trigger_batch_reembedding(self, force: bool = False):
         """Trigger an asynchronous, background, database-wide re-embedding migration."""
         import threading
@@ -151,7 +171,7 @@ class VisionDB:
     def _run_reembedding_migration(self, force: bool = False):
         import time
         from aw_vision.settings import settings_store
-        from aw_vision.gemini import generate_gemini_batch_embeddings, is_internet_online
+        from aw_vision.gemini import generate_gemini_batch_embeddings, is_internet_online, embedding_model_supports_image
         import requests
 
         provider = settings_store.get("provider")
@@ -200,14 +220,19 @@ class VisionDB:
 
                 batch_recs = records[i:i + batch_size]
 
-                # Build right-sized, text-only embedding inputs consistent with live ingestion.
+                # Build right-sized embedding inputs consistent with live ingestion.
                 texts = [build_embedding_text(r) for r in batch_recs]
 
                 # Generate embeddings
                 new_vectors = []
                 if current_provider == "gemini":
                     if is_internet_online():
-                        new_vectors = generate_gemini_batch_embeddings(texts)
+                        # Attach screenshots for multimodal-capable Gemini embedding models so the
+                        # vector captures visual signal; text-only models skip the image payload.
+                        img_paths = None
+                        if embedding_model_supports_image(current_model):
+                            img_paths = self._resolve_record_image_paths(batch_recs)
+                        new_vectors = generate_gemini_batch_embeddings(texts, img_paths=img_paths)
                     else:
                         raise RuntimeError("Network offline during Gemini re-embedding migration.")
                 else:

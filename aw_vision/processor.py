@@ -181,7 +181,7 @@ class BulkProcessor:
     def get_embedding(self, text: str, img_path: str = None, rec_id: str = None, keep_alive: int = 300) -> list[float]:
         """Fetch vector embedding for the description using configured provider (Gemini or Ollama)."""
         from aw_vision.settings import settings_store
-        from aw_vision.gemini import generate_gemini_embedding, is_internet_online
+        from aw_vision.gemini import generate_gemini_embedding, is_internet_online, embedding_model_supports_image
 
         provider = settings_store.get("provider")
         use_gemini = (provider == "gemini" and is_internet_online())
@@ -189,9 +189,14 @@ class BulkProcessor:
         embedding = []
         if use_gemini:
             try:
+                emb_model = settings_store.get("gemini_embedding_model")
+                # Only attach the screenshot for multimodal-capable embedding models; text-only
+                # models would just pay the base64 upload cost for no gain.
+                use_img = img_path if (img_path and embedding_model_supports_image(emb_model)) else None
                 if rec_id:
-                    self.log_step(rec_id, f"Generating Gemini semantic embedding using '{settings_store.get('gemini_embedding_model') or 'default'}'.")
-                embedding = generate_gemini_embedding(text, img_path=img_path)
+                    kind = "multimodal " if use_img else ""
+                    self.log_step(rec_id, f"Generating Gemini {kind}semantic embedding using '{emb_model or 'default'}'.")
+                embedding = generate_gemini_embedding(text, img_path=use_img)
             except Exception as e:
                 err_msg = f"Error generating Gemini embedding: {e}. Falling back to Ollama."
                 if rec_id:
@@ -845,8 +850,11 @@ You must respond in valid JSON format matching this exact schema:
                         "ocr_text": ocr_text,
                     })
                     keep_alive = 0 if (idx == N - 1) else 300
+                    # Pass the focused screenshot; get_embedding only forwards it to
+                    # multimodal-capable embedding models (e.g. gemini-embedding-2).
                     embedding = self.get_embedding(
                         embedding_text,
+                        img_path=str(img_path),
                         rec_id=rec_id,
                         keep_alive=keep_alive
                     )
