@@ -4,6 +4,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from apscheduler.schedulers.background import BackgroundScheduler
+
 from aw_vision.config import config
 from aw_vision.embedding import generate_embedding
 from aw_vision.processor.monitor import MonitorMixin
@@ -25,7 +27,7 @@ class BulkProcessor(MonitorMixin, OcrMixin, MirrorMixin, RetentionMixin, VisionS
         self.current_rec_id = None
         self.current_stage = None
         self.last_error = None
-        self.thread = None
+        self.scheduler = None
         self.lock = threading.Lock()
         self.processing_ids = set()
         self.processing_logs = {}
@@ -96,58 +98,73 @@ class BulkProcessor(MonitorMixin, OcrMixin, MirrorMixin, RetentionMixin, VisionS
 
         threading.Thread(target=run_force, daemon=True).start()
 
-    def _loop(self):
-        print(f"Processor daemon started. Running check every {config.check_interval}s.")
-        last_cleanup_time = 0.0
-        while self.running:
-            try:
-                # Run storage retention cleanup periodically
-                now = time.time()
-                cleanup_interval_seconds = config.cleanup_interval_hours * 3600
-                if now - last_cleanup_time >= cleanup_interval_seconds:
-                    self.run_retention_cleanup()
-                    last_cleanup_time = now
+    def _process_tick(self):
+        """One CPU-aware processing check: when idle and work is pending, process the queue."""
+        try:
+            with self.lock:
+                if self.is_processing:
+                    # A batch is already running; skip this tick.
+                    return
 
-                with self.lock:
-                    is_proc = self.is_processing
+            queue = self.get_pending_queue()
+            if not queue:
+                # No pending files, we're fully caught up.
+                return
 
-                if is_proc:
-                    # Already processing, skip this loop iteration
-                    pass
-                else:
-                    queue = self.get_pending_queue()
-                    if queue:
-                        print(f"Pending screenshots in queue: {len(queue)}")
-                        # Check if system is idle before running heavy Ollama jobs
-                        if self.is_system_idle():
-                            projects = config.load_projects()
-                            # Process the entire queue as an optimized batch!
-                            self.process_batch(queue, projects)
-                        else:
-                            print("System is busy (not idle). Postponing screenshot processing.")
-                    else:
-                        # No pending files, we're fully caught up
-                        pass
-            except Exception as e:
-                print(f"Error in processor loop: {e}")
+            print(f"Pending screenshots in queue: {len(queue)}")
+            # Check if system is idle before running heavy Ollama jobs
+            if self.is_system_idle():
+                projects = config.load_projects()
+                # Process the entire queue as an optimized batch!
+                self.process_batch(queue, projects)
+            else:
+                print("System is busy (not idle). Postponing screenshot processing.")
+        except Exception as e:
+            print(f"Error in processor tick: {e}")
 
-            # Sleep until next check
-            for _ in range(config.check_interval * 10):
-                if not self.running:
-                    break
-                time.sleep(0.1)
+    def _retention_tick(self):
+        """Periodic storage retention cleanup pass."""
+        try:
+            self.run_retention_cleanup()
+        except Exception as e:
+            print(f"Error in retention tick: {e}")
 
     def start(self):
-        if not self.running:
-            self.running = True
-            self.thread = threading.Thread(target=self._loop, daemon=True)
-            self.thread.start()
+        if self.running:
+            return
+        self.running = True
+
+        # Use APScheduler (per AGENTS.md "reuse high-quality libraries") instead of a
+        # hand-rolled sleep loop. coalesce + max_instances=1 prevent overlapping runs.
+        self.scheduler = BackgroundScheduler(daemon=True)
+        self.scheduler.add_job(
+            self._process_tick,
+            "interval",
+            seconds=max(1, config.check_interval),
+            id="process_tick",
+            max_instances=1,
+            coalesce=True,
+        )
+        self.scheduler.add_job(
+            self._retention_tick,
+            "interval",
+            hours=max(1, config.cleanup_interval_hours),
+            id="retention_tick",
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(),  # run an initial cleanup shortly after startup
+        )
+        self.scheduler.start()
+        print(
+            f"Processor scheduler started. Processing check every {config.check_interval}s; "
+            f"retention cleanup every {config.cleanup_interval_hours}h."
+        )
 
     def stop(self):
         self.running = False
-        if self.thread:
-            self.thread.join(timeout=2.0)
-            self.thread = None
+        if self.scheduler:
+            self.scheduler.shutdown(wait=False)
+            self.scheduler = None
         print("Processor daemon stopped.")
 
 
