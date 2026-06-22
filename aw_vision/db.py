@@ -10,42 +10,6 @@ import requests
 from aw_vision.config import config
 
 
-def build_embedding_text(record: dict, max_ocr_chars: int = 1200) -> str:
-    """Build a consistent, right-sized text representation of a screenshot for semantic embedding.
-
-    Combines the high-signal structured metadata (app, window, project, tags) with the
-    synthesized description and a bounded slice of OCR text. Heavy raw artifacts (full image
-    bytes, unbounded OCR) are intentionally excluded so the embedding stays focused and cheap
-    while still capturing what the user was actually doing. Used by both live ingestion and the
-    database-wide re-embedding migration so document vectors stay consistent.
-    """
-    app_name = (record.get("app_name") or "").strip()
-    window_title = (record.get("window_title") or "").strip()
-    description = (record.get("description") or "").strip()
-    project = (record.get("project_number") or "").strip()
-    tags = record.get("tags") or []
-    if isinstance(tags, list):
-        tags_str = ", ".join(t.strip() for t in tags if t and str(t).strip())
-    else:
-        tags_str = str(tags).strip()
-    ocr = (record.get("ocr_text") or "").strip()
-    if max_ocr_chars and len(ocr) > max_ocr_chars:
-        ocr = ocr[:max_ocr_chars]
-
-    lines = []
-    if app_name:
-        lines.append(f"Application: {app_name}")
-    if window_title:
-        lines.append(f"Window: {window_title}")
-    if project and project.lower() != "none":
-        lines.append(f"Project: {project}")
-    if tags_str:
-        lines.append(f"Tags: {tags_str}")
-    lines.append(f"Description: {description}")
-    lines.append(f"Extracted Screen Text: {ocr}")
-    return "\n".join(lines)
-
-
 class VisionDB:
     def __init__(self):
         self.db_dir = config.db_dir
@@ -171,7 +135,8 @@ class VisionDB:
     def _run_reembedding_migration(self, force: bool = False):
         import time
         from aw_vision.settings import settings_store
-        from aw_vision.gemini import generate_gemini_batch_embeddings, is_internet_online, embedding_model_supports_image
+        from aw_vision.gemini import generate_gemini_batch_embeddings, is_internet_online
+        from aw_vision.embedding import build_embedding_text, embedding_model_supports_image
         import requests
 
         provider = settings_store.get("provider")

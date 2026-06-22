@@ -31,26 +31,6 @@ def _get_resolved_llm_model(model_name: str) -> str:
     return model_name
 
 
-# Gemini embedding models that accept inline image parts (i.e. true multimodal embeddings).
-# For these we attach the screenshot so the vector captures visual layout/signal that the
-# OCR + description text cannot. Text-only embedding models skip the image to stay cheap.
-_MULTIMODAL_EMBEDDING_HINTS = (
-    "embedding-2",
-    "embeddings-2",
-    "embedding-002",
-    "embeddings-002",
-    "multimodal",
-)
-
-
-def embedding_model_supports_image(model: Optional[str]) -> bool:
-    """Return True if the given embedding model id supports multimodal (text + image) inputs."""
-    if not model:
-        return False
-    m = model.lower()
-    return any(hint in m for hint in _MULTIMODAL_EMBEDDING_HINTS)
-
-
 def is_internet_online() -> bool:
     """Check if the internet is online and the Gemini API is reachable with a short timeout."""
     try:
