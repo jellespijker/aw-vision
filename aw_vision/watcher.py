@@ -25,10 +25,36 @@ class ScreenshotWatcher:
         self.thread = None
         self.hostname = self._get_hostname()
 
+    # High-signal, compact fields worth carrying from auxiliary watcher buckets
+    # (e.g. web/editor watchers). Everything else in the raw event payload is dropped
+    # so the downstream vision prompt stays focused — not too much, not too little.
+    _USEFUL_BUCKET_FIELDS = (
+        "title", "url", "app", "file", "language", "project",
+        "branch", "editor", "domain", "channel", "document", "path",
+    )
+
     def _get_hostname(self) -> str:
         import socket
 
         return socket.gethostname()
+
+    def _curate_bucket_data(self, data: dict) -> dict:
+        """Extract only the high-signal, bounded fields from a raw watcher event payload."""
+        if not isinstance(data, dict):
+            return {}
+        curated = {}
+        for key in self._USEFUL_BUCKET_FIELDS:
+            val = data.get(key)
+            if val is None:
+                continue
+            if isinstance(val, str):
+                val = val.strip()
+                if not val:
+                    continue
+                if len(val) > 200:
+                    val = val[:200] + "…"
+            curated[key] = val
+        return curated
 
     def _capture_screenshot_wayland(self, output_path: Path, mode: str = "active") -> bool:
         """KDE Wayland screenshot capture using spectacle or grim."""
@@ -163,7 +189,9 @@ class ScreenshotWatcher:
                         if b_resp.status_code == 200:
                             events = b_resp.json()
                             if events:
-                                bucket_context[bid] = events[0].get("data", {})
+                                curated = self._curate_bucket_data(events[0].get("data", {}))
+                                if curated:
+                                    bucket_context[bid] = curated
 
         except Exception as e:
             print(f"Warning: Could not connect to aw-server to gather context ({e})")

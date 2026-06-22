@@ -12,7 +12,7 @@ import psutil
 import requests
 
 from aw_vision.config import config
-from aw_vision.db import db
+from aw_vision.db import db, build_embedding_text
 
 
 def caveman_compress_text(text: str) -> str:
@@ -679,67 +679,64 @@ class BulkProcessor:
                     stage_keep_alive = 300
                     final_keep_alive = 0 if (idx == N - 1) else 300
 
-                    # --- Stage 1: Active Window Description ---
+                    # ---------------------------------------------------------
+                    # Pass 1/2: Single multimodal vision call.
+                    # Collapses the former Stages 1, 2 & 6 (active window, desktop
+                    # context, unique artifacts) into ONE inference over both crops,
+                    # encoding each image at most once instead of three times.
+                    # ---------------------------------------------------------
                     active_window_description = "No active window description generated."
+                    full_desktop_description = "No fullscreen desktop context available."
+                    unique_things = "None detected."
+                    has_full = full_img_path.exists()
                     try:
-                        self.log_step(rec_id, "Stage 1/6: Analyzing Active Window focused crop...")
-                        prompt_s1 = (
-                            "Describe exactly what window, application document, or active workspace section is open, "
-                            "focusing ONLY on the focused foreground window content. Be highly objective, granular, and precise. "
-                            "Specify filenames, code functions, browser URLs, searched keywords, active spreadsheet columns, or chat messages. "
-                            "Do not explain background context, make generic assumptions, or add conversational filler. "
-                            "Just describe the active focused foreground window elements visible.\n\n"
+                        self.log_step(rec_id, "Vision pass 1/2: Analyzing focused window, desktop context & unique artifacts...")
+                        images_v = [str(img_path)]
+                        if has_full:
+                            images_v.append(str(full_img_path))
+                        prompt_v = (
+                            "Analyze the attached desktop screenshot(s). "
+                            + (
+                                "The FIRST image is the focused foreground window; the SECOND is the full background desktop context. "
+                                if has_full
+                                else "The image is the focused foreground window. "
+                            )
+                            + "Be highly objective, granular, and precise. Specify filenames, code functions, browser URLs, "
+                            "searched keywords, active spreadsheet columns, or chat messages. Do not add conversational filler "
+                            "or generic assumptions.\n\n"
                             "You must respond in valid JSON format matching this schema:\n"
-                            '{\n  "active_window_description": "string"\n}'
+                            "{\n"
+                            '  "active_window_description": "what the focused foreground window/document/workspace shows",\n'
+                            '  "full_desktop_description": "peripheral/background windows, sidebars or layout OUTSIDE the focus (keep brief if none)",\n'
+                            '  "unique_things": "specific terminal commands, active code blocks, file paths, specialized widgets or tools present"\n'
+                            "}"
                         )
-                        response_s1 = client.chat(
+                        response_v = client.chat(
                             model=config.vision_model,
-                            messages=[{"role": "user", "content": prompt_s1, "images": [str(img_path)]}],
+                            messages=[{"role": "user", "content": prompt_v, "images": images_v}],
                             format="json",
                             options={"temperature": 0.2, "num_ctx": 8192},
                             keep_alive=stage_keep_alive,
                         )
-                        raw_s1 = response_s1.get("message", {}).get("content", "")
-                        parsed_s1 = json.loads(raw_s1)
-                        active_window_description = parsed_s1.get("active_window_description", "").strip() or active_window_description
-                        self.log_step(rec_id, f"Stage 1 Complete: {active_window_description[:120]}...")
-                    except Exception as es1:
-                        self.log_step(rec_id, f"Warning: Stage 1 failed: {es1}")
-                        active_window_description = f"Error analyzing active window focused crop: {es1}"
+                        parsed_v = json.loads(response_v.get("message", {}).get("content", "") or "{}")
+                        active_window_description = (parsed_v.get("active_window_description") or "").strip() or active_window_description
+                        full_desktop_description = (parsed_v.get("full_desktop_description") or "").strip() or full_desktop_description
+                        unique_things = (parsed_v.get("unique_things") or "").strip() or unique_things
+                        self.log_step(rec_id, f"Vision pass complete: {active_window_description[:120]}...")
+                    except Exception as ev:
+                        self.log_step(rec_id, f"Warning: Vision pass failed: {ev}")
+                        active_window_description = f"Error analyzing screenshot: {ev}"
 
-                    # --- Stage 2: Full Desktop Context ---
-                    full_desktop_description = "No fullscreen desktop context available."
-                    if full_img_path.exists():
-                        try:
-                            self.log_step(rec_id, "Stage 2/6: Analyzing Full Desktop Context...")
-                            prompt_s2 = (
-                                "Describe any supplementary or peripheral windows, background apps, desktop workspace layout, "
-                                "or sidebars as supplementary context. Focus only on things OUTSIDE the active focused window. "
-                                "If no other relevant windows or context exist, keep it very brief.\n\n"
-                                "You must respond in valid JSON format matching this schema:\n"
-                                '{\n  "full_desktop_description": "string"\n}'
-                            )
-                            response_s2 = client.chat(
-                                model=config.vision_model,
-                                messages=[{"role": "user", "content": prompt_s2, "images": [str(full_img_path)]}],
-                                format="json",
-                                options={"temperature": 0.2, "num_ctx": 8192},
-                                keep_alive=stage_keep_alive,
-                            )
-                            raw_s2 = response_s2.get("message", {}).get("content", "")
-                            parsed_s2 = json.loads(raw_s2)
-                            full_desktop_description = parsed_s2.get("full_desktop_description", "").strip() or full_desktop_description
-                            self.log_step(rec_id, f"Stage 2 Complete: {full_desktop_description[:120]}...")
-                        except Exception as es2:
-                            self.log_step(rec_id, f"Warning: Stage 2 failed: {es2}")
-                            full_desktop_description = f"Error analyzing full desktop context: {es2}"
-                    else:
-                        self.log_step(rec_id, "Stage 2/6: Skipped (no fullscreen desktop image).")
-
-                    # --- Stage 3: Project Classification ---
+                    # ---------------------------------------------------------
+                    # Pass 2/2: Single text-only synthesis call.
+                    # Collapses the former Stages 3, 4 & 5 (project classification,
+                    # tag generation, caveman-style description) into ONE inference.
+                    # ---------------------------------------------------------
                     project_number = "None"
+                    tags = []
+                    description = "No description generated."
                     try:
-                        self.log_step(rec_id, "Stage 3/6: Retrieving semantic neighbor context & running Project Classification...")
+                        self.log_step(rec_id, "Vision pass 2/2: Classifying project, generating tags & synthesizing description...")
 
                         # Query historically similar snapshots using metadata overlap instead of vector embeddings to prevent model swapping
                         similar_snapshots = db.get_similar_labeled_snapshots_by_metadata(
@@ -747,161 +744,50 @@ class BulkProcessor:
                             window_title=meta.get("window_title"),
                             limit=5
                         )
-                        similar_snapshots_str = json.dumps(similar_snapshots, indent=2, ensure_ascii=False)
+                        similar_snapshots_str = json.dumps(similar_snapshots, ensure_ascii=False)
 
-                        projects_str = json.dumps(projects, indent=2, ensure_ascii=False)
-
-                        prompt_s3 = f"""
-Compare the following information:
-- Active Window Description: {active_window_description}
-- Full Desktop Description: {full_desktop_description}
+                        prompt_syn = f"""
+You are indexing a desktop snapshot. Use only the evidence below.
+- Active Window: {active_window_description}
+- Desktop Context: {full_desktop_description}
+- Unique Artifacts: {unique_things}
 - Extracted Screen Text (OCR): {truncated_ocr}
 - ActivityWatch Bucket State: {aw_context_str}
-- Neighboring Snapshots context: {neighbor_context_str}
+- Neighboring Snapshots: {neighbor_context_str}
 - Historically Similar Snapshots: {similar_snapshots_str}
 - App project statistics: {app_freq_str}
 
-Your task is to classify this activity into one of the following active projects from the Project Reference Catalog:
+Project Reference Catalog:
 {projects_str}
 
-CRITICAL RULES:
-1. Be extremely conservative and precise when matching projects. If there is no strong, explicit, and direct evidence correlating the active screen contents to a project's description/entailment, you MUST output "None".
-2. Do NOT match a project just because the word or name appears in an inactive sidebar chat title, adjacent tab name, or browser bookmark.
-3. Do NOT assume that external company profiles are related to the user's active development projects.
-4. Stay consistent with neighbor contexts and historically similar/human-labeled snapshots if they represent a continuous block of activity on the same application.
+Produce exactly three outputs:
+1. project_number: classify this activity into ONE catalog project. Be extremely conservative: if there is no strong, explicit, and direct evidence correlating the active screen contents to a project's description/entailment, output "None". Do NOT match on inactive sidebar chats, adjacent tab names, browser bookmarks, or external company profiles. Stay consistent with neighbor and human-labeled snapshots when they form a continuous block of activity on the same application.
+2. tags: 3 to 7 highly relevant, technical tags/keywords for this task. Prioritize reusing these existing database tags for consistency: {existing_tags}
+3. description: an ultra-dense, highly precise "Caveman-style" work summary. Omit filler words (the, a, is, was, were, to, of, for); use dense technical fragments separated by semicolons/periods. Every word must carry maximum technical information.
+   Example: "Dev aw-vision UI. Refactored list component; displaying unique elements via exact CSS tokens."
 
-You must respond in valid JSON format matching this schema:
+You must respond in valid JSON format matching this exact schema:
 {{
-  "project_number": "string"
-}}
-(Use "None" if no project matches)
-"""
-                        # Pure text-based prompt
-                        response_s3 = client.chat(
-                            model=config.vision_model,
-                            messages=[{"role": "user", "content": prompt_s3}],
-                            format="json",
-                            options={"temperature": 0.1, "num_ctx": 8192},
-                            keep_alive=stage_keep_alive,
-                        )
-                        raw_s3 = response_s3.get("message", {}).get("content", "")
-                        parsed_s3 = json.loads(raw_s3)
-                        project_number = parsed_s3.get("project_number", "None").strip() or "None"
-                        self.log_step(rec_id, f"Stage 3 Complete: Matched Project = '{project_number}'")
-                    except Exception as es3:
-                        self.log_step(rec_id, f"Warning: Stage 3 failed: {es3}")
-                        project_number = "None"
-
-                    # --- Stage 4: Tag Generation ---
-                    tags = []
-                    try:
-                        self.log_step(rec_id, "Stage 4/6: Generating technical tags...")
-                        prompt_s4 = f"""
-Based on the following desktop screenshot context:
-- Active Window Description: {active_window_description}
-- Full Desktop Description: {full_desktop_description}
-- Extracted Screen Text (OCR): {truncated_ocr}
-- Assigned Project: {project_number}
-
-Provide a list of 3 to 7 highly relevant, technical tags or keywords representing this active task (e.g., ["react", "api-integration", "customer-outreach", "documentation", "system-diagnostic"]).
-
-Prioritize matches with this list of existing tags in the database to maintain consistency: {existing_tags}
-
-You must respond in valid JSON format matching this schema:
-{{
-  "tags": ["string"]
-}}
-"""
-                        # Pure text-based prompt
-                        response_s4 = client.chat(
-                            model=config.vision_model,
-                            messages=[{"role": "user", "content": prompt_s4}],
-                            format="json",
-                            options={"temperature": 0.2, "num_ctx": 8192},
-                            keep_alive=stage_keep_alive,
-                        )
-                        raw_s4 = response_s4.get("message", {}).get("content", "")
-                        parsed_s4 = json.loads(raw_s4)
-                        tags = parsed_s4.get("tags", [])
-                        if not isinstance(tags, list):
-                            tags = []
-                        self.log_step(rec_id, f"Stage 4 Complete: Tags = {tags}")
-                    except Exception as es4:
-                        self.log_step(rec_id, f"Warning: Stage 4 failed: {es4}")
-                        tags = []
-
-                    # --- Stage 5: Work Description Synthesis ---
-                    description = "No description generated."
-                    try:
-                        self.log_step(rec_id, "Stage 5/6: Synthesizing final work description...")
-                        prompt_s5 = f"""
-Synthesize all of the following intermediate details into an ultra-dense, highly precise "Caveman-style" work description (omitting pronouns, articles, and auxiliary filler verbs like 'the', 'is', 'a', 'was', 'were', 'to', 'for'). Use symbols, shorthand, and dense technical fragments separated by punctuation.
-
-Intermediate Details:
-- Active Window Description: {active_window_description}
-- Full Desktop Description: {full_desktop_description}
-- Extracted Screen Text (OCR): {truncated_ocr}
-- ActivityWatch Context: {aw_context_str}
-- Assigned Project: {project_number}
-- Technical Tags: {tags}
-
-Syntactic Rules:
-1. Speak like a highly technical "caveman": use short sentences, omit non-essential filler words, and favor fragments/phrases.
-2. Ensure every single word carries maximum technical information. Minimize fluff.
-3. Separate distinct actions or observations with semicolons or periods.
-4. Example of standard description: "Developing the frontend UI for aw-vision, refactoring the list component to display unique elements with exact CSS tokens."
-5. Example of Caveman-style equivalent (DO THIS STYLE): "Dev aw-vision UI. Refactored list component; displaying unique elements via exact CSS tokens."
-
-You must respond in valid JSON format matching this schema:
-{{
+  "project_number": "string (catalog project number, or \\"None\\")",
+  "tags": ["string"],
   "description": "string"
 }}
 """
-                        # Pure text-based prompt
-                        response_s5 = client.chat(
+                        response_syn = client.chat(
                             model=config.vision_model,
-                            messages=[{"role": "user", "content": prompt_s5}],
-                            format="json",
-                            options={"temperature": 0.2, "num_ctx": 8192},
-                            keep_alive=stage_keep_alive,
-                        )
-                        raw_s5 = response_s5.get("message", {}).get("content", "")
-                        parsed_s5 = json.loads(raw_s5)
-                        description = parsed_s5.get("description", "No description generated.").strip() or description
-                        self.log_step(rec_id, f"Stage 5 Complete: Description = {description}")
-                    except Exception as es5:
-                        self.log_step(rec_id, f"Warning: Stage 5 failed: {es5}")
-                        description = "Error synthesizing work description."
-
-                    # --- Stage 6: Unique Scene Items ---
-                    unique_things = "None detected."
-                    try:
-                        self.log_step(rec_id, "Stage 6/6: Extracting unique elements & tools...")
-                        prompt_s6 = (
-                            "Analyze both the Active Window (First Image) and Fullscreen Desktop (Second Image) screenshots. "
-                            "Identify and describe any unique elements, files, specialized widgets, terminal commands, active code blocks, "
-                            "or specific tools present on the screen. Summarize these items as a clear bulleted list or a concise descriptive string.\n\n"
-                            "You must respond in valid JSON format matching this schema:\n"
-                            '{\n  "unique_things": "string"\n}'
-                        )
-                        images_s6 = [str(img_path)]
-                        if full_img_path.exists():
-                            images_s6.append(str(full_img_path))
-
-                        response_s6 = client.chat(
-                            model=config.vision_model,
-                            messages=[{"role": "user", "content": prompt_s6, "images": images_s6}],
+                            messages=[{"role": "user", "content": prompt_syn}],
                             format="json",
                             options={"temperature": 0.2, "num_ctx": 8192},
                             keep_alive=final_keep_alive,
                         )
-                        raw_s6 = response_s6.get("message", {}).get("content", "")
-                        parsed_s6 = json.loads(raw_s6)
-                        unique_things = parsed_s6.get("unique_things", "").strip() or unique_things
-                        self.log_step(rec_id, "Stage 6 Complete: Unique elements detected.")
-                    except Exception as es6:
-                        self.log_step(rec_id, f"Warning: Stage 6 failed: {es6}")
-                        unique_things = "Error detecting unique elements."
+                        parsed_syn = json.loads(response_syn.get("message", {}).get("content", "") or "{}")
+                        project_number = (parsed_syn.get("project_number") or "None").strip() or "None"
+                        syn_tags = parsed_syn.get("tags", [])
+                        tags = syn_tags if isinstance(syn_tags, list) else []
+                        description = (parsed_syn.get("description") or "").strip() or description
+                        self.log_step(rec_id, f"Synthesis complete: Project='{project_number}', Tags={tags}, Desc={description[:120]}...")
+                    except Exception as esyn:
+                        self.log_step(rec_id, f"Warning: Synthesis pass failed: {esyn}")
 
                     # Assign results to meta dictionary
                     meta["description"] = description
@@ -948,11 +834,19 @@ You must respond in valid JSON format matching this schema:
                 embedding = meta.get("vector")
                 if not embedding or len(embedding) == 0:
                     emb_start = time.time()
-                    embedding_text = f"Description: {description}\n\nExtracted Screen Text:\n{ocr_text}"
+                    # Build a right-sized, text-only embedding input (no full image bytes) that
+                    # includes high-signal metadata for better semantic retrieval.
+                    embedding_text = build_embedding_text({
+                        "app_name": meta.get("app_name"),
+                        "window_title": meta.get("window_title"),
+                        "description": description,
+                        "project_number": meta.get("project_number"),
+                        "tags": tags,
+                        "ocr_text": ocr_text,
+                    })
                     keep_alive = 0 if (idx == N - 1) else 300
                     embedding = self.get_embedding(
                         embedding_text,
-                        img_path=str(img_path),
                         rec_id=rec_id,
                         keep_alive=keep_alive
                     )
