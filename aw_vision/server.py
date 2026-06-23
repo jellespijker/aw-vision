@@ -37,8 +37,32 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
+    # Guard against systemd restart races where the new process starts before the
+    # old one releases the socket.  FastAPI's startup event fires *before* uvicorn
+    # attempts to bind the port, so a port-already-in-use failure is not yet visible
+    # here.  If another PID is already listening on our port, we're a duplicate
+    # instance that is about to fail — skip the background workers to avoid
+    # spurious screenshots from every failing restart cycle.
+    our_pid = os.getpid()
+    our_port = config.port
+    try:
+        for conn in psutil.net_connections(kind="inet"):
+            if (
+                conn.laddr
+                and conn.laddr.port == our_port
+                and conn.status == "LISTEN"
+                and conn.pid
+                and conn.pid != our_pid
+            ):
+                print(
+                    f"[startup] Port {our_port} already held by PID {conn.pid}. "
+                    "Skipping background services — this instance will exit shortly."
+                )
+                return
+    except Exception as e:
+        print(f"[startup] Port check failed ({e}), proceeding with startup.")
+
     print("Starting aw-vision services...")
-    # Start background threads
     watcher.start()
     processor.start()
 
