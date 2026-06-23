@@ -317,13 +317,18 @@ class ScreenshotWatcher:
             print(f"Error saving metadata: {e}")
 
     def _loop(self):
+        me = threading.current_thread()
         print(f"Watcher daemon started. Capturing every {config.screenshot_interval}s.")
-        while self.running:
+        while self.running and self.thread is me:
             start_time = time.time()
             try:
                 self.capture_cycle()
             except Exception as e:
                 print(f"Error in capture loop: {e}")
+
+            # Exit immediately if we were displaced by a newer start() call.
+            if not (self.running and self.thread is me):
+                break
 
             # Sleep for the rest of the interval
             elapsed = time.time() - start_time
@@ -331,7 +336,7 @@ class ScreenshotWatcher:
 
             # Sleep in small increments to respond quickly to shutdown
             for _ in range(int(sleep_time * 10)):
-                if not self.running:
+                if not (self.running and self.thread is me):
                     break
                 time.sleep(0.1)
 
@@ -344,7 +349,9 @@ class ScreenshotWatcher:
     def stop(self):
         self.running = False
         if self.thread:
-            self.thread.join(timeout=2.0)
+            # Allow enough time for an in-flight spectacle capture to complete
+            # (spectacle timeout is 10s + grim fallback 5s per call, two calls in "both" mode).
+            self.thread.join(timeout=25.0)
             self.thread = None
         print("Watcher daemon stopped.")
 
