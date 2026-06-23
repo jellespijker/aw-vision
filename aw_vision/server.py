@@ -44,7 +44,7 @@ def startup_event():
     # instance that is about to fail — skip the background workers to avoid
     # spurious screenshots from every failing restart cycle.
     our_pid = os.getpid()
-    our_port = config.port
+    our_port = config.server_port
     try:
         for conn in psutil.net_connections(kind="inet"):
             if (
