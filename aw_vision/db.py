@@ -18,6 +18,12 @@ class VisionDB:
         self.table_name = "screenshots"
         self.projects_table_name = "projects"
         self._projects_table = None
+        # Memoize embedding dimension per provider/model to avoid probing Ollama on every embed call.
+        self._dim_cache = {}
+        # Short-lived cache of unique tags to avoid full-table scans during batch processing.
+        self._tags_cache = None
+        self._tags_cache_time = 0.0
+        self._tags_cache_ttl = 120.0
         self._reembedding_status = {
             "is_running": False,
             "total_records": 0,
@@ -33,7 +39,12 @@ class VisionDB:
         return self._db
 
     def get_embedding_dimension(self) -> int:
-        """Query Ollama or return Gemini dimension based on configured settings."""
+        """Return the active embedding vector dimension, memoized per provider/model.
+
+        The Ollama probe (a live embed request that unloads the model) is expensive and was
+        previously executed on every single embedding call, defeating model keep-alive. We now
+        cache successful probes per (provider, model) so the cost is paid at most once.
+        """
         from aw_vision.settings import settings_store
         provider = settings_store.get("provider")
         if provider == "gemini":
@@ -41,26 +52,30 @@ class VisionDB:
             return 3072
 
         # Else, Ollama provider
+        model = settings_store.get("ollama_embedding_model") or config.embedding_model
+        cache_key = f"ollama:{model}"
+        if cache_key in self._dim_cache:
+            return self._dim_cache[cache_key]
+
         try:
             url = f"{config.ollama_host}/api/embeddings"
-            model = settings_store.get("ollama_embedding_model") or config.embedding_model
             payload = {"model": model, "prompt": "hello", "keep_alive": 0}
             resp = requests.post(url, json=payload, timeout=15.0)
             if resp.status_code == 200:
                 emb = resp.json().get("embedding", [])
                 if emb:
+                    self._dim_cache[cache_key] = len(emb)
                     return len(emb)
         except Exception as e:
             print(f"Warning: Could not query Ollama to determine embedding size ({e}). Defaulting to 768.")
 
-        # Fallback dimensions depending on common models
-        model = (settings_store.get("ollama_embedding_model") or config.embedding_model).lower()
-        if "nomic" in model:
+        # Fallback dimensions depending on common models. Not cached so a real probe can succeed
+        # once Ollama becomes reachable (avoids sticking a wrong default while the model warms up).
+        ml = model.lower()
+        if "nomic" in ml:
             return 768
-        elif "minilm" in model:
+        elif "minilm" in ml:
             return 384
-        elif "gemma" in model:
-            return 768
         return 768
 
     def get_schema(self, dim: int) -> pa.Schema:
@@ -87,6 +102,26 @@ class VisionDB:
             ]
         )
 
+    def _resolve_record_image_paths(self, records: list) -> list:
+        """Resolve on-disk processed image paths for a batch of records.
+
+        Returns one entry per record: an absolute path string when the screenshot still exists,
+        or None when it was never set or has been purged by the retention lifecycle.
+        """
+        processed_dir = config.screenshots_dir / "processed"
+        paths = []
+        for r in records:
+            image_path_str = r.get("image_path")
+            resolved = None
+            if image_path_str:
+                p = Path(image_path_str)
+                if not p.is_absolute():
+                    p = processed_dir / p.name
+                if p.exists():
+                    resolved = str(p)
+            paths.append(resolved)
+        return paths
+
     def trigger_batch_reembedding(self, force: bool = False):
         """Trigger an asynchronous, background, database-wide re-embedding migration."""
         import threading
@@ -101,6 +136,7 @@ class VisionDB:
         import time
         from aw_vision.settings import settings_store
         from aw_vision.gemini import generate_gemini_batch_embeddings, is_internet_online
+        from aw_vision.embedding import build_embedding_text, embedding_model_supports_image
         import requests
 
         provider = settings_store.get("provider")
@@ -149,32 +185,18 @@ class VisionDB:
 
                 batch_recs = records[i:i + batch_size]
 
-                # Build texts and matching physical image paths
-                texts = []
-                img_paths = []
-                processed_dir = config.screenshots_dir / "processed"
-                for r in batch_recs:
-                    desc = r.get("description") or ""
-                    ocr = r.get("ocr_text") or ""
-                    joint_text = f"Description: {desc}\n\nExtracted Screen Text: {ocr}"
-                    texts.append(joint_text)
-
-                    image_path_str = r.get("image_path")
-                    if image_path_str:
-                        p = Path(image_path_str)
-                        if not p.is_absolute():
-                            p = processed_dir / p.name
-                        if p.exists():
-                            img_paths.append(str(p))
-                        else:
-                            img_paths.append(None)
-                    else:
-                        img_paths.append(None)
+                # Build right-sized embedding inputs consistent with live ingestion.
+                texts = [build_embedding_text(r) for r in batch_recs]
 
                 # Generate embeddings
                 new_vectors = []
                 if current_provider == "gemini":
                     if is_internet_online():
+                        # Attach screenshots for multimodal-capable Gemini embedding models so the
+                        # vector captures visual signal; text-only models skip the image payload.
+                        img_paths = None
+                        if embedding_model_supports_image(current_model):
+                            img_paths = self._resolve_record_image_paths(batch_recs)
                         new_vectors = generate_gemini_batch_embeddings(texts, img_paths=img_paths)
                     else:
                         raise RuntimeError("Network offline during Gemini re-embedding migration.")
@@ -561,12 +583,22 @@ class VisionDB:
         }
 
     def get_all_unique_tags(self) -> list[str]:
-        """Get all unique tags present in the database."""
+        """Get all unique tags present in the database.
+
+        Projects only the ``tags`` column (avoiding loading descriptions, OCR and heavy vectors)
+        and memoizes the result with a short TTL, so repeated calls during a processing batch do
+        not trigger a full-table scan per screenshot.
+        """
+        now = time.time()
+        if self._tags_cache is not None and (now - self._tags_cache_time) < self._tags_cache_ttl:
+            return self._tags_cache
+
         try:
-            records = self.get_all_records(limit=10000)
+            tbl = self.table
+            records = tbl.search().select(["tags"]).limit(100000).to_list()
         except Exception as e:
             print(f"Error querying unique tags: {e}")
-            return []
+            return self._tags_cache if self._tags_cache is not None else []
 
         unique_tags = set()
         for r in records:
@@ -575,7 +607,10 @@ class VisionDB:
                 for t in tags:
                     if t:
                         unique_tags.add(t.strip())
-        return sorted(list(unique_tags))
+
+        self._tags_cache = sorted(unique_tags)
+        self._tags_cache_time = now
+        return self._tags_cache
 
     def get_record_by_id(self, record_id: str) -> dict | None:
         """Fetch a specific record by its ID."""
