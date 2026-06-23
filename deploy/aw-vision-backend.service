@@ -1,0 +1,16 @@
+[Unit]
+Description=ActivityWatch Vision Backend API
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/activitywatch/aw-vision
+ExecStart=/usr/bin/poetry run uvicorn aw_vision.server:app --host 127.0.0.1 --port 5666
+Restart=on-failure
+RestartSec=15
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Install]
+WantedBy=graphical-session.target
