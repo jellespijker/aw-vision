@@ -33,4 +33,8 @@ fileignoreconfig:
   checksum: e1fd009f0d8bcc0b4d3849eeb9a964b02be0e50c92d58498520589a94cf2d04d
 - filename: frontend/src/components/SettingsTab.tsx
   checksum: 6468b44da12af62d87ff90167adf1340b5a8625e274dcdcdd1af182d6f0374e6
+- filename: aw_vision/mcp_manager.py
+  checksum: 9dd99c72ff8d158db582b8f85cb11b8efd9cb31ac4dfee6613fb254bc98e448b
+- filename: frontend/src/components/McpSettings.tsx
+  checksum: 8a0dfac4b664677b2ccbcdf348c49b44fd7ce33fd8ad4aba4743341774c5c2b2
 version: ""

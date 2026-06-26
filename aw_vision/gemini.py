@@ -302,6 +302,7 @@ def run_gemini_combined_ocr_vision(
     projects: List[Dict[str, Any]],
     existing_tags: List[str],
     ocr_text: Optional[str] = None,
+    extra_context: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Perform screenshot OCR and Vision Analysis simultaneously in a single, high-efficiency Gemini multimodal API call."""
     key = settings_store.get("gemini_api_key")
@@ -330,6 +331,13 @@ def run_gemini_combined_ocr_vision(
     projects_str = json.dumps(projects, indent=2, ensure_ascii=False)
     tags_str = ", ".join(existing_tags[:100])
 
+    mcp_context_block = ""
+    if extra_context:
+        mcp_context_block = (
+            "\nExternal MCP Tool Context (authoritative supplementary data from connected "
+            f"integrations such as GitHub/Jira; use it to improve project classification and tags):\n{extra_context}\n"
+        )
+
     ocr_instruction = (
         "1. OCR: Extract all readable text, titles, labels, browser URLs, files, or characters shown on the screen exactly as displayed. Put this in 'ocr_text'. Keep it clean and unformatted."
         if not ocr_text
@@ -338,7 +346,7 @@ def run_gemini_combined_ocr_vision(
 
     prompt = f"""
 Analyze this desktop screenshot (the first image is the focused foreground crop; the second is the full background desktop context, if provided).
-
+{mcp_context_block}
 Perform the following analytical indexing tasks:
 {ocr_instruction}
 2. Foreground Context: Describe precisely what application, document, URL, code, or workspace section is open, focusing on the focused crop. Be objective and fine-grained. Put this in 'active_window_description'.

@@ -87,6 +87,26 @@ class TestKeyRequest(BaseModel):
     api_key: str
 
 
+class MCPServerModel(BaseModel):
+    id: Optional[str] = None
+    name: str
+    enabled: bool = True
+    transport: str = "stdio"
+    command: Optional[str] = ""
+    args: Optional[List[str]] = None
+    env: Optional[dict] = None
+    cwd: Optional[str] = ""
+    url: Optional[str] = ""
+    auth_type: Optional[str] = "none"
+    auth_token: Optional[str] = ""
+    header_name: Optional[str] = "Authorization"
+    assignments: Optional[List[str]] = None
+
+
+class MCPTestRequest(BaseModel):
+    server: MCPServerModel
+
+
 # ---------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------
@@ -807,6 +827,74 @@ def force_reembed():
     from aw_vision.db import db
     db.trigger_batch_reembedding(force=True)
     return {"status": "success", "message": "Background re-embedding recalculation initiated."}
+
+
+# ---------------------------------------------------------
+# MCP (Model Context Protocol) Integration Endpoints
+# ---------------------------------------------------------
+
+
+@app.get("/api/mcp/slots")
+def get_mcp_slots():
+    """Return the list of assignable pipeline/agent slots an MCP server can attach to."""
+    from aw_vision.mcp_manager import SLOTS
+
+    return {"slots": SLOTS}
+
+
+@app.get("/api/mcp/servers")
+def list_mcp_servers():
+    """List all configured MCP servers with secrets masked."""
+    from aw_vision.mcp_manager import mcp_store, mask_server
+
+    return {"servers": [mask_server(s) for s in mcp_store.list()]}
+
+
+@app.post("/api/mcp/servers")
+def save_mcp_server(payload: MCPServerModel):
+    """Create or update an MCP server configuration."""
+    from aw_vision.mcp_manager import mcp_store, mask_server
+
+    try:
+        saved = mcp_store.save(payload.dict(exclude_none=False))
+        return {"status": "success", "server": mask_server(saved)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save MCP server: {e}")
+
+
+@app.delete("/api/mcp/servers/{server_id}")
+def delete_mcp_server(server_id: str):
+    """Delete an MCP server configuration."""
+    from aw_vision.mcp_manager import mcp_store
+
+    existed = mcp_store.delete(server_id)
+    if not existed:
+        raise HTTPException(status_code=404, detail="MCP server not found.")
+    return {"status": "success", "message": f"Deleted MCP server '{server_id}'."}
+
+
+@app.post("/api/mcp/servers/test")
+def test_mcp_server(payload: MCPTestRequest):
+    """Connect to an MCP server (saved or unsaved) and return its discovered tools."""
+    from aw_vision.mcp_manager import mcp_manager, mcp_store, normalize_server
+
+    cfg = normalize_server(payload.server.dict(exclude_none=False))
+    # If the token came back masked, substitute the stored secret so test still works.
+    from aw_vision.mcp_manager import SECRET_MASK
+
+    if cfg.get("auth_token") == SECRET_MASK and cfg.get("id"):
+        existing = mcp_store.get(cfg["id"])
+        if existing:
+            cfg["auth_token"] = existing.get("auth_token", "")
+            if cfg.get("env"):
+                merged_env = dict(existing.get("env", {}))
+                for k, v in cfg["env"].items():
+                    if v and v != SECRET_MASK:
+                        merged_env[k] = v
+                cfg["env"] = merged_env
+
+    result = mcp_manager.test_server(cfg)
+    return result
 
 
 # Serve compiled static React files in production/standalone mode

@@ -46,6 +46,27 @@ def caveman_compress_text(text: str) -> str:
     return " | ".join(compressed_lines)
 
 
+def mcp_enrich(slot: str, query: str, rec_id: str = None) -> str:
+    """Fetch external MCP context assigned to a given pipeline prompt slot.
+
+    Returns an empty string when no MCP server is assigned to ``slot`` (the common
+    case), guaranteeing zero behavioural or performance impact unless the user has
+    explicitly wired an MCP server into that prompt. Never raises.
+    """
+    try:
+        from aw_vision.mcp_manager import mcp_manager
+
+        if not mcp_manager.servers_for_slot(slot):
+            return ""
+        context = mcp_manager.gather_context_for_slot(slot, query)
+        if context and rec_id:
+            return context
+        return context
+    except Exception as e:
+        print(f"[MCP] Pipeline enrichment failed for slot '{slot}': {e}")
+        return ""
+
+
 class BulkProcessor:
     def __init__(self):
         self.raw_dir = config.screenshots_dir / "raw"
@@ -590,13 +611,20 @@ class BulkProcessor:
                         existing_tags = db.get_all_unique_tags()
                         if len(existing_tags) > 100:
                             existing_tags = existing_tags[:100]
+
+                        # Optional external MCP context for the combined cloud prompt.
+                        mcp_query = f"{meta.get('app_name', '')} {meta.get('window_title', '')} {(cached_ocr or '')[:200]}".strip()
+                        mcp_ctx_combined = mcp_enrich("gemini_combined", mcp_query, rec_id)
+                        if mcp_ctx_combined:
+                            self.log_step(rec_id, "Injected external MCP context into Gemini combined prompt.")
                         try:
                             res = run_gemini_combined_ocr_vision(
                                 img_path=img_path,
                                 full_img_path=full_img_path if full_img_path.exists() else None,
                                 projects=projects,
                                 existing_tags=existing_tags,
-                                ocr_text=cached_ocr if cached_ocr else None
+                                ocr_text=cached_ocr if cached_ocr else None,
+                                extra_context=mcp_ctx_combined or None
                             )
                             meta["ocr_text"] = res.get("ocr_text", "") or cached_ocr or ""
                             meta["description"] = res.get("description", "No description generated.")
@@ -742,6 +770,13 @@ class BulkProcessor:
 
                         projects_str = json.dumps(projects, indent=2, ensure_ascii=False)
 
+                        # Optional external MCP context (GitHub/Jira/etc.) for classification.
+                        mcp_query = f"{meta.get('app_name', '')} {meta.get('window_title', '')} {truncated_ocr[:200]}".strip()
+                        mcp_ctx_s3 = mcp_enrich("stage3_classification", mcp_query, rec_id)
+                        if mcp_ctx_s3:
+                            self.log_step(rec_id, "Stage 3: Injected external MCP context into classification prompt.")
+                        mcp_block_s3 = f"\n- External MCP Tool Context:\n{mcp_ctx_s3}" if mcp_ctx_s3 else ""
+
                         prompt_s3 = f"""
 Compare the following information:
 - Active Window Description: {active_window_description}
@@ -750,7 +785,7 @@ Compare the following information:
 - ActivityWatch Bucket State: {aw_context_str}
 - Neighboring Snapshots context: {neighbor_context_str}
 - Historically Similar Snapshots: {similar_snapshots_str}
-- App project statistics: {app_freq_str}
+- App project statistics: {app_freq_str}{mcp_block_s3}
 
 Your task is to classify this activity into one of the following active projects from the Project Reference Catalog:
 {projects_str}

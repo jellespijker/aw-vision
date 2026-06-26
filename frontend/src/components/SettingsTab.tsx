@@ -17,6 +17,7 @@ import {
   Sparkles,
   ShieldAlert
 } from 'lucide-react'
+import { McpSettings } from './McpSettings'
 
 interface SettingsTabProps {
   showNotification: (text: string, type: 'success' | 'danger') => void
@@ -856,6 +857,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
           </div>
         </div>
       </form>
+
+      {/* MCP (Model Context Protocol) integrations */}
+      <McpSettings showNotification={showNotification} />
     </div>
   )
 }
