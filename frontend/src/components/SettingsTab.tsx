@@ -3,6 +3,7 @@ import axios from 'axios'
 import {
   Settings,
   Key,
+  Bot,
   Cpu,
   Server,
   Activity,
@@ -60,6 +61,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
   const [loading, setLoading] = useState<boolean>(true)
   const [saving, setSaving] = useState<boolean>(false)
   const [showKey, setShowKey] = useState<boolean>(false)
+
+  // Active settings sub-section (tab within the Settings page)
+  type SettingsSection = 'provider' | 'models' | 'agent' | 'database'
+  const [section, setSection] = useState<SettingsSection>('provider')
 
   // API testing states
   const [testingKey, setTestingKey] = useState<boolean>(false)
@@ -253,39 +258,62 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
     return combined
   }
 
+  const sections: { id: SettingsSection; label: string; icon: React.ElementType }[] = [
+    { id: 'provider', label: 'Provider', icon: Cpu },
+    { id: 'models', label: 'Pipeline Models', icon: isGeminiActive ? Sparkles : Server },
+    { id: 'agent', label: 'Memory Agent', icon: Bot },
+    { id: 'database', label: 'Database', icon: Database }
+  ]
+
   return (
     <div className="font-sans space-y-6">
-      {/* Header section */}
-      <div className="border-b border-surface-container-high pb-5">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[11px] font-semibold text-primary uppercase tracking-wider bg-accent-surface border border-primary/10 px-2.5 py-0.5 rounded font-mono select-none">
-                System Configurations
-              </span>
-              {isGeminiActive ? (
-                <span className="text-[11px] font-semibold text-success-green uppercase tracking-wider bg-success-green/10 border border-success-green/20 px-2 py-0.5 rounded font-mono flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> Gemini Active
-                </span>
-              ) : (
-                <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider bg-surface-container-low border border-surface-container-high px-2 py-0.5 rounded font-mono flex items-center gap-1">
-                  <Server className="w-3 h-3" /> Ollama Local Only
-                </span>
-              )}
-            </div>
-            <h2 className="text-2xl md:text-3xl font-bold text-neutral-dark tracking-tight">
-              AI Provider &amp; Model Engine
-            </h2>
-            <p className="text-text-secondary text-body-md mt-1.5 max-w-2xl leading-relaxed">
-              Transition between local-only Ollama models and Google Gemini cloud services. Sensitive API keys are hardware-encrypted locally.
-            </p>
-          </div>
+      {/* Page header */}
+      <div>
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="text-[11px] font-semibold text-primary uppercase tracking-wider bg-accent-surface border border-primary/10 px-2.5 py-0.5 rounded font-mono select-none">
+            System Configurations
+          </span>
+          {isGeminiActive ? (
+            <span className="text-[11px] font-semibold text-success-green uppercase tracking-wider bg-success-green/10 border border-success-green/20 px-2 py-0.5 rounded font-mono flex items-center gap-1">
+              <Sparkles className="w-3 h-3" /> Gemini Active
+            </span>
+          ) : (
+            <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider bg-surface-container-low border border-surface-container-high px-2 py-0.5 rounded font-mono flex items-center gap-1">
+              <Server className="w-3 h-3" /> Ollama Local Only
+            </span>
+          )}
         </div>
+        <h2 className="text-2xl md:text-3xl font-bold text-neutral-dark tracking-tight">Settings</h2>
+        <p className="text-text-secondary text-body-md mt-1.5 max-w-2xl leading-relaxed">
+          Transition between local-only Ollama models and Google Gemini cloud services. Sensitive API keys are hardware-encrypted locally.
+        </p>
       </div>
 
-      <form onSubmit={saveSettings} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: API & Provider Configuration (7 columns) */}
-        <div className="lg:col-span-7 space-y-6">
+      {/* Horizontal sub-tab navigation */}
+      <div className="flex gap-1 border-b border-surface-container-high overflow-x-auto select-none">
+        {sections.map((s) => {
+          const Icon = s.icon
+          const isActive = section === s.id
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setSection(s.id)}
+              className={`h-10 px-4 text-action-md font-medium font-messina border-b-2 -mb-px flex items-center gap-2 shrink-0 transition-colors cursor-pointer ${
+                isActive
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-text-secondary hover:text-neutral-dark'
+              }`}
+            >
+              <Icon className="w-4 h-4" /> {s.label}
+            </button>
+          )
+        })}
+      </div>
+
+      <form onSubmit={saveSettings} className="space-y-6">
+        {/* SECTION: Provider */}
+        <div className={`max-w-3xl space-y-6 ${section === 'provider' ? '' : 'hidden'}`}>
           {/* Provider Selection Card */}
           <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-5">
             <h3 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2 border-b border-surface-container-high pb-3">
@@ -464,6 +492,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
             </div>
           </div>
 
+        </div>
+
+        {/* SECTION: Pipeline Models */}
+        <div className={`max-w-3xl space-y-6 ${section === 'models' ? '' : 'hidden'}`}>
           {/* Model Specific Settings */}
           {isGeminiActive ? (
             /* Gemini cloud model config card */
@@ -650,8 +682,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
           )}
         </div>
 
-        {/* Right Column: Memory Agent & DB Maintenance (5 columns) */}
-        <div className="lg:col-span-5 space-y-6">
+        {/* SECTION: Memory Agent */}
+        <div className={`max-w-3xl space-y-6 ${section === 'agent' ? '' : 'hidden'}`}>
           {/* Interactive Memory Agent Config */}
           <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-5">
             <h3 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2 border-b border-surface-container-high pb-3">
@@ -743,6 +775,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
             </div>
           </div>
 
+        </div>
+
+        {/* SECTION: Database */}
+        <div className={`max-w-3xl space-y-6 ${section === 'database' ? '' : 'hidden'}`}>
           {/* Database Re-embedding Progress and Controls */}
           <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-4">
             <h3 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2 border-b border-surface-container-high pb-3">
@@ -826,34 +862,35 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
             )}
           </div>
 
-          {/* Action buttons footer */}
-          <div className="flex items-center gap-4 justify-end pt-2">
-            <button
-              type="button"
-              onClick={fetchSettings}
-              disabled={saving}
-              className="bg-surface-container-low hover:bg-surface-container border border-surface-container-high text-neutral-dark text-action-md font-bold py-3 px-5 rounded h-11 transition-all cursor-pointer"
-            >
-              Reset Changes
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="bg-primary hover:opacity-90 border border-primary text-on-primary text-action-md font-bold py-3 px-6 rounded h-11 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-55 shadow-none"
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="w-4.5 h-4.5 animate-spin" />
-                  Saving Configuration...
-                </>
-              ) : (
-                <>
-                  <Settings className="w-4.5 h-4.5" />
-                  Save configurations
-                </>
-              )}
-            </button>
-          </div>
+        </div>
+
+        {/* Shared action buttons footer */}
+        <div className="flex items-center gap-4 justify-end pt-5 border-t border-surface-container-high">
+          <button
+            type="button"
+            onClick={fetchSettings}
+            disabled={saving}
+            className="bg-surface-container-low hover:bg-surface-container border border-surface-container-high text-neutral-dark text-action-md font-bold py-3 px-5 rounded h-11 transition-all cursor-pointer"
+          >
+            Reset Changes
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="bg-primary hover:opacity-90 border border-primary text-on-primary text-action-md font-bold py-3 px-6 rounded h-11 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-55 shadow-none"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="w-4.5 h-4.5 animate-spin" />
+                Saving Configuration...
+              </>
+            ) : (
+              <>
+                <Settings className="w-4.5 h-4.5" />
+                Save configurations
+              </>
+            )}
+          </button>
         </div>
       </form>
     </div>
