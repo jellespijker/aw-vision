@@ -529,15 +529,25 @@ def run_agent_node(state: AgentState) -> AgentState:
     prompt = "\n".join(prompt_lines)
 
     agent_provider = settings_store.get("agent_provider")
+    agent_model = settings_store.get("agent_model") or ""
+
+    # Auto-Provider Fallback: if agent_provider is gemini but the model name is local Gemma, fall back to Ollama
+    if agent_provider == "gemini" and "gemma" in agent_model.lower():
+        print(f"[Memory Agent] Gemma model '{agent_model}' detected with Gemini provider. Automatically routing to local Ollama for stability.")
+        agent_provider = "ollama"
+
     use_gemini = (agent_provider == "gemini" and is_internet_online())
 
     if use_gemini:
-        print(f"[Memory Agent] Routing agent reasoning to Gemini using '{settings_store.get('agent_model')}'...")
+        print(f"[Memory Agent] Routing agent reasoning to Gemini using '{agent_model}'...")
         ctx_size = settings_store.get_int("agent_context_size")
         reply = run_gemini_chat_agent(prompt=prompt, history=[], context_size=ctx_size)
     else:
         # Fallback to local Ollama
-        model = settings_store.get("ollama_vision_model") or config.vision_model
+        model = agent_model or settings_store.get("ollama_vision_model") or config.vision_model
+        # Resolve model name to an installed local model name if it contains Gemma 4 variations
+        if "gemma-4" in model or "gemma4" in model or model == "gemma-4-31b-it" or model == "gemma-4-26b-a4b-it":
+            model = "gemma4:e2b-it-qat"
         print(f"[Memory Agent] Routing agent reasoning to Ollama using '{model}'...")
         try:
             url = f"{config.ollama_host}/api/generate"

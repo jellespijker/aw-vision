@@ -21,6 +21,7 @@ langchain-community = ">=0.0.28"
 aw-client = ">=0.5.1"
 pyyaml = ">=6.0.1"
 mcp = ">=1.0.0"
+apscheduler = "^3.11.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
@@ -41,4 +42,8 @@ target-version = ['py310']
 [tool.isort]
 profile = "black"
 line_length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 

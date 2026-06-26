@@ -15,7 +15,12 @@ import {
   EyeOff,
   RefreshCw,
   Sparkles,
-  ShieldAlert
+  ShieldAlert,
+  Camera,
+  Clock,
+  Trash2,
+  History,
+  Plug
 } from 'lucide-react'
 import { McpSettings } from './McpSettings'
 
@@ -55,12 +60,17 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
     agent_model: 'gemma4:e2b-it-qat',
     agent_context_size: 8192,
     max_ocr_chars: 1200,
-    max_tool_result_chars: 3000
+    max_tool_result_chars: 3000,
+    screenshot_interval_seconds: 60,
+    check_interval_seconds: 10,
+    max_screenshot_lifetime_days: 14,
+    cleanup_interval_hours: 1
   })
 
   const [loading, setLoading] = useState<boolean>(true)
   const [saving, setSaving] = useState<boolean>(false)
   const [showKey, setShowKey] = useState<boolean>(false)
+  const [subTab, setSubTab] = useState<'engine' | 'mcp'>('engine')
 
   // API testing states
   const [testingKey, setTestingKey] = useState<boolean>(false)
@@ -233,7 +243,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
   const geminiEmbeddings = ['gemini-embedding-002', 'gemini-embeddings-002', 'text-embedding-004']
 
   // Merge custom models with fetched models, ensuring no duplicates
-  const getLlmOptions = () => {
+  const getLlmOptions = (excludeGemma = false) => {
     const customModels = [
       { id: 'gemma-4-26b-a4b-it', display_name: 'Gemma 4 26B A4B IT (Recommended)' },
       { id: 'gemma-4-31b-it', display_name: 'Gemma 4 31B IT' },
@@ -242,7 +252,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
       { id: 'gemini-1.5-pro', display_name: 'Gemini 1.5 Pro' }
     ]
 
-    const combined = [...customModels]
+    let combined = [...customModels]
     geminiModels.forEach(m => {
       if (!combined.some(c => c.id === m.id)) {
         combined.push({
@@ -251,6 +261,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
         })
       }
     })
+
+    if (excludeGemma) {
+      combined = combined.filter(m => !m.id.toLowerCase().includes('gemma'))
+    }
     return combined
   }
 
@@ -275,15 +289,42 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
               )}
             </div>
             <h2 className="text-2xl md:text-3xl font-bold text-neutral-dark tracking-tight">
-              AI Provider &amp; Model Engine
+              System Settings
             </h2>
             <p className="text-text-secondary text-body-md mt-1.5 max-w-2xl leading-relaxed">
-              Transition between local-only Ollama models and Google Gemini cloud services. Sensitive API keys are hardware-encrypted locally.
+              Configure AI providers and models, screen-capture cadence, and external MCP integrations. Sensitive credentials are hardware-encrypted locally.
             </p>
           </div>
         </div>
       </div>
 
+      {/* Settings sub-tab navigation */}
+      <div className="flex border-b border-surface-container-high gap-2 overflow-x-auto select-none">
+        <button
+          type="button"
+          onClick={() => setSubTab('engine')}
+          className={`h-10 px-5 text-action-md font-medium rounded-t transition-all border-b-2 flex items-center gap-2 shrink-0 cursor-pointer ${
+            subTab === 'engine'
+              ? 'border-primary text-primary bg-surface-container-lowest'
+              : 'border-transparent text-text-secondary hover:text-neutral-dark hover:bg-surface-container-low'
+          }`}
+        >
+          <Cpu className="w-4 h-4" /> AI &amp; Models
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('mcp')}
+          className={`h-10 px-5 text-action-md font-medium rounded-t transition-all border-b-2 flex items-center gap-2 shrink-0 cursor-pointer ${
+            subTab === 'mcp'
+              ? 'border-primary text-primary bg-surface-container-lowest'
+              : 'border-transparent text-text-secondary hover:text-neutral-dark hover:bg-surface-container-low'
+          }`}
+        >
+          <Plug className="w-4 h-4" /> MCP Integrations
+        </button>
+      </div>
+
+      {subTab === 'engine' && (
       <form onSubmit={saveSettings} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: API & Provider Configuration (7 columns) */}
         <div className="lg:col-span-7 space-y-6">
@@ -347,6 +388,34 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
                   API Key Required
                 </span>
               </label>
+            </div>
+
+            <div className="border-t border-surface-container-high pt-5 mt-5 space-y-4">
+              <div className="space-y-1.5 max-w-md">
+                <label htmlFor="ocrProviderSelect" className="text-body-sm font-semibold text-text-secondary">
+                  OCR Provider
+                </label>
+                <select
+                  id="ocrProviderSelect"
+                  name="ocrProviderSelect"
+                  value={settings.ocr_provider || 'ollama'}
+                  onChange={(e) => handleSettingChange('ocr_provider', e.target.value)}
+                  className="w-full bg-surface-container-low border border-surface-container-high h-11 px-3 rounded text-body-md text-neutral-dark outline-none focus:border-primary transition-colors cursor-pointer"
+                >
+                  <option value="ollama">Ollama (Local GLM-OCR)</option>
+                  <option value="gemini">Gemini (Cloud OCR)</option>
+                </select>
+                <p className="text-[11px] text-text-secondary">
+                  Select where screenshot text extraction takes place.
+                </p>
+              </div>
+
+              <div className="p-4 bg-surface-container-low rounded border border-surface-container-high text-body-sm text-text-secondary flex items-start gap-2 leading-relaxed">
+                <CheckCircle2 className="w-4.5 h-4.5 text-success-green shrink-0 mt-0.5" />
+                <div>
+                  <strong>Pipeline Optimization:</strong> If both main provider and OCR provider are set to Gemini, local OCR is bypassed, and Phase 2 combines both OCR and Vision extraction in a single multimodal request to save API quota and time.
+                </div>
+              </div>
             </div>
           </div>
 
@@ -536,32 +605,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
                     Recommended: <strong>1,048,576</strong> characters.
                   </span>
                 </div>
-
-                <div className="space-y-1.5">
-                  <label htmlFor="ocrProviderSelect" className="text-body-sm font-semibold text-text-secondary">
-                    OCR Provider
-                  </label>
-                  <select
-                    id="ocrProviderSelect"
-                    name="ocrProviderSelect"
-                    value={settings.ocr_provider || 'ollama'}
-                    onChange={(e) => handleSettingChange('ocr_provider', e.target.value)}
-                    className="w-full bg-surface-container-low border border-surface-container-high h-11 px-3 rounded text-body-md text-neutral-dark outline-none focus:border-primary transition-colors cursor-pointer"
-                  >
-                    <option value="ollama">Ollama (Local GLM-OCR)</option>
-                    <option value="gemini">Gemini (Cloud OCR)</option>
-                  </select>
-                  <p className="text-[11px] text-text-secondary">
-                    Select where screenshot text extraction takes place.
-                  </p>
-                </div>
-
-                <div className="p-4 bg-surface-container-low rounded border border-surface-container-high text-body-sm text-text-secondary flex items-start gap-2 leading-relaxed md:col-span-2">
-                  <CheckCircle2 className="w-4.5 h-4.5 text-success-green shrink-0 mt-0.5" />
-                  <div>
-                    <strong>Pipeline Optimization:</strong> If both main provider and OCR provider are set to Gemini, local OCR is bypassed, and Phase 2 combines both OCR and Vision extraction in a single multimodal request to save API quota and time.
-                  </div>
-                </div>
               </div>
             </div>
           ) : (
@@ -744,6 +787,126 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
             </div>
           </div>
 
+          {/* Capture Loop & Retention Settings */}
+          <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-5">
+            <h3 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2 border-b border-surface-container-high pb-3">
+              <Camera className="w-5 h-5 text-primary" /> Capture &amp; Retention Settings
+            </h3>
+
+            <div className="space-y-4">
+              {/* Screenshot Capture Interval */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <label htmlFor="screenshotIntervalInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-primary" /> Screenshot Capture Interval
+                  </label>
+                  <span className="text-technical-sm font-mono text-primary font-bold bg-accent-surface border border-primary/10 px-2 py-0.5 rounded">
+                    {settings.screenshot_interval_seconds} seconds
+                  </span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <input
+                    id="screenshotIntervalInputRange"
+                    type="range"
+                    min="10"
+                    max="600"
+                    step="5"
+                    value={settings.screenshot_interval_seconds || 60}
+                    onChange={(e) => handleSettingChange('screenshot_interval_seconds', parseInt(e.target.value))}
+                    className="flex-1 accent-primary h-2 bg-surface-container rounded-lg appearance-none cursor-pointer"
+                  />
+                  <input
+                    id="screenshotIntervalInput"
+                    name="screenshotIntervalInput"
+                    type="number"
+                    min="10"
+                    max="3600"
+                    value={settings.screenshot_interval_seconds || 60}
+                    onChange={(e) => handleSettingChange('screenshot_interval_seconds', parseInt(e.target.value) || 0)}
+                    className="w-20 text-center bg-surface-container-low border border-surface-container-high h-9 px-2 rounded text-body-sm text-neutral-dark font-mono outline-none focus:border-primary transition-colors"
+                  />
+                </div>
+                <p className="text-technical-sm text-text-secondary leading-normal">
+                  Frequency of capturing window/desktop states. Re-evaluated in real-time.
+                </p>
+              </div>
+
+              {/* CPU-Aware Resource Check Interval */}
+              <div className="space-y-1.5">
+                <label htmlFor="checkIntervalInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-primary" /> Resource Status Check Frequency
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    id="checkIntervalInput"
+                    name="checkIntervalInput"
+                    type="number"
+                    min="1"
+                    max="300"
+                    value={settings.check_interval_seconds || 10}
+                    onChange={(e) => handleSettingChange('check_interval_seconds', parseInt(e.target.value) || 0)}
+                    className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark font-mono outline-none focus:border-primary transition-colors"
+                  />
+                  <span className="text-body-sm text-text-secondary font-medium shrink-0">seconds</span>
+                </div>
+                <p className="text-technical-sm text-text-secondary leading-normal">
+                  Cycle duration for evaluating resource status (CPU thresholds) in moments of low activity.
+                </p>
+              </div>
+
+              {/* Retention Policy Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Screenshot Max Lifetime */}
+                <div className="space-y-1.5">
+                  <label htmlFor="maxScreenshotLifetimeInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                    <Trash2 className="w-4 h-4 text-primary" /> Image File Max Lifetime
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="maxScreenshotLifetimeInput"
+                      name="maxScreenshotLifetimeInput"
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={settings.max_screenshot_lifetime_days || 14}
+                      onChange={(e) => handleSettingChange('max_screenshot_lifetime_days', parseInt(e.target.value) || 0)}
+                      className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark font-mono outline-none focus:border-primary transition-colors"
+                    />
+                    <span className="text-body-sm text-text-secondary font-medium shrink-0">days</span>
+                  </div>
+                </div>
+
+                {/* Cleanup Scan Frequency */}
+                <div className="space-y-1.5">
+                  <label htmlFor="cleanupIntervalInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                    <History className="w-4 h-4 text-primary" /> Purge Cycle Interval
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="cleanupIntervalInput"
+                      name="cleanupIntervalInput"
+                      type="number"
+                      min="1"
+                      max="168"
+                      value={settings.cleanup_interval_hours || 1}
+                      onChange={(e) => handleSettingChange('cleanup_interval_hours', parseInt(e.target.value) || 0)}
+                      className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark font-mono outline-none focus:border-primary transition-colors"
+                    />
+                    <span className="text-body-sm text-text-secondary font-medium shrink-0">hours</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Info alert banner */}
+              <div className="p-4 bg-surface-container-low rounded border border-surface-container-high text-body-sm text-text-secondary flex items-start gap-2.5 leading-relaxed">
+                <CheckCircle2 className="w-4.5 h-4.5 text-success-green shrink-0 mt-0.5" />
+                <div>
+                  <strong>Retention Policy:</strong> Raw screenshot image files older than configured days are deleted permanently, but metadata (OCR texts, description contexts, coordinates) is kept forever so your history remains completely searchable.
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Database Re-embedding Progress and Controls */}
           <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-4">
             <h3 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2 border-b border-surface-container-high pb-3">
@@ -857,9 +1020,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
           </div>
         </div>
       </form>
+      )}
 
-      {/* MCP (Model Context Protocol) integrations */}
-      <McpSettings showNotification={showNotification} />
+      {/* MCP (Model Context Protocol) integrations sub-tab */}
+      {subTab === 'mcp' && <McpSettings showNotification={showNotification} />}
     </div>
   )
 }

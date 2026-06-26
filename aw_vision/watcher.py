@@ -25,10 +25,36 @@ class ScreenshotWatcher:
         self.thread = None
         self.hostname = self._get_hostname()
 
+    # High-signal, compact fields worth carrying from auxiliary watcher buckets
+    # (e.g. web/editor watchers). Everything else in the raw event payload is dropped
+    # so the downstream vision prompt stays focused — not too much, not too little.
+    _USEFUL_BUCKET_FIELDS = (
+        "title", "url", "app", "file", "language", "project",
+        "branch", "editor", "domain", "channel", "document", "path",
+    )
+
     def _get_hostname(self) -> str:
         import socket
 
         return socket.gethostname()
+
+    def _curate_bucket_data(self, data: dict) -> dict:
+        """Extract only the high-signal, bounded fields from a raw watcher event payload."""
+        if not isinstance(data, dict):
+            return {}
+        curated = {}
+        for key in self._USEFUL_BUCKET_FIELDS:
+            val = data.get(key)
+            if val is None:
+                continue
+            if isinstance(val, str):
+                val = val.strip()
+                if not val:
+                    continue
+                if len(val) > 200:
+                    val = val[:200] + "…"
+            curated[key] = val
+        return curated
 
     def _capture_screenshot_wayland(self, output_path: Path, mode: str = "active") -> bool:
         """KDE Wayland screenshot capture using spectacle or grim."""
@@ -163,17 +189,75 @@ class ScreenshotWatcher:
                         if b_resp.status_code == 200:
                             events = b_resp.json()
                             if events:
-                                bucket_context[bid] = events[0].get("data", {})
+                                curated = self._curate_bucket_data(events[0].get("data", {}))
+                                if curated:
+                                    bucket_context[bid] = curated
 
         except Exception as e:
             print(f"Warning: Could not connect to aw-server to gather context ({e})")
 
         return window_title, app_name, is_afk, bucket_context
 
+    def _is_audio_active(self) -> bool:
+        """Check if any audio stream (playback or capture) is actively running under PipeWire."""
+        try:
+            res = subprocess.run(
+                ["wpctl", "status"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            if res.returncode != 0:
+                return False
+
+            lines = res.stdout.splitlines()
+            audio_section = False
+            streams_section = False
+
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+
+                # Top-level sections in wpctl status are not indented
+                if not line.startswith(" ") and not line.startswith("└─") and not line.startswith("├─"):
+                    if stripped == "Audio":
+                        audio_section = True
+                    else:
+                        audio_section = False
+                    streams_section = False
+                    continue
+
+                if audio_section:
+                    if "Streams:" in stripped:
+                        streams_section = True
+                        continue
+                    if streams_section and "[active]" in stripped:
+                        return True
+        except Exception as e:
+            print(f"Error checking audio stream status: {e}")
+        return False
+
     def capture_cycle(self):
         """Main screenshot and context capture iteration."""
         # 1. Gather context first to check if the user is active
         window_title, app_name, is_afk, bucket_context = self.fetch_active_window_and_afk()
+
+        # Check if in a call or watching a video to bypass AFK suspension
+        title_lower = window_title.lower()
+        app_lower = app_name.lower()
+        call_video_keywords = [
+            "meet.google.com", "teams.microsoft.com", "zoom", "webex", "skype",
+            "discord", "slack", "youtube", "netflix", "vlc", "mpv", "plex",
+            "twitch", "disney+", "prime video", "hbo", "spotify", "soundcloud",
+            "call", "meeting", "video", "conference", "webinar", "stream",
+        ]
+        has_keyword_match = any(kw in title_lower or kw in app_lower for kw in call_video_keywords)
+        audio_active = self._is_audio_active()
+
+        if is_afk and (has_keyword_match or audio_active):
+            print(f"[{datetime.now()}] User is AFK, but active call/video detected (Audio active: {audio_active}, Metadata match: {has_keyword_match}). Bypassing AFK sleep.")
+            is_afk = False
 
         if is_afk:
             print(f"[{datetime.now()}] User is AFK. Skipping screenshot capture cycle. Triggering bulk processing.")
@@ -233,13 +317,18 @@ class ScreenshotWatcher:
             print(f"Error saving metadata: {e}")
 
     def _loop(self):
+        me = threading.current_thread()
         print(f"Watcher daemon started. Capturing every {config.screenshot_interval}s.")
-        while self.running:
+        while self.running and self.thread is me:
             start_time = time.time()
             try:
                 self.capture_cycle()
             except Exception as e:
                 print(f"Error in capture loop: {e}")
+
+            # Exit immediately if we were displaced by a newer start() call.
+            if not (self.running and self.thread is me):
+                break
 
             # Sleep for the rest of the interval
             elapsed = time.time() - start_time
@@ -247,7 +336,7 @@ class ScreenshotWatcher:
 
             # Sleep in small increments to respond quickly to shutdown
             for _ in range(int(sleep_time * 10)):
-                if not self.running:
+                if not (self.running and self.thread is me):
                     break
                 time.sleep(0.1)
 
@@ -260,7 +349,9 @@ class ScreenshotWatcher:
     def stop(self):
         self.running = False
         if self.thread:
-            self.thread.join(timeout=2.0)
+            # Allow enough time for an in-flight spectacle capture to complete
+            # (spectacle timeout is 10s + grim fallback 5s per call, two calls in "both" mode).
+            self.thread.join(timeout=25.0)
             self.thread = None
         print("Watcher daemon stopped.")
 

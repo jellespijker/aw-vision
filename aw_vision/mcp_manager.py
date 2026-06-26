@@ -31,12 +31,8 @@ from aw_vision.settings import decrypt_value, encrypt_value
 # pipeline external tools are allowed to be consulted.
 SLOTS: List[Dict[str, str]] = [
     {"id": "agent", "label": "Ask Memory Agent", "group": "Agent"},
-    {"id": "stage1_active_window", "label": "Stage 1 · Active Window", "group": "Local Pipeline"},
-    {"id": "stage2_full_desktop", "label": "Stage 2 · Full Desktop Context", "group": "Local Pipeline"},
-    {"id": "stage3_classification", "label": "Stage 3 · Project Classification", "group": "Local Pipeline"},
-    {"id": "stage4_tags", "label": "Stage 4 · Tag Generation", "group": "Local Pipeline"},
-    {"id": "stage5_synthesis", "label": "Stage 5 · Work Synthesis", "group": "Local Pipeline"},
-    {"id": "stage6_unique", "label": "Stage 6 · Unique Artifacts", "group": "Local Pipeline"},
+    {"id": "local_vision", "label": "Local Vision Pass (window · desktop · artifacts)", "group": "Local Pipeline"},
+    {"id": "local_synthesis", "label": "Local Synthesis (classification · tags · description)", "group": "Local Pipeline"},
     {"id": "gemini_combined", "label": "Gemini Combined OCR + Vision", "group": "Cloud Pipeline"},
 ]
 
