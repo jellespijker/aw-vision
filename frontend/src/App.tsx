@@ -4,8 +4,7 @@ import { EyeOff, RefreshCw } from 'lucide-react'
 
 import type { DaemonStatus, HistoryRecord, Project, ChatMessage, TimelineEntry } from './types'
 import { NotificationToast } from './components/NotificationToast'
-import { Header } from './components/Header'
-import { Tabs } from './components/Tabs'
+import { Sidebar } from './components/Sidebar'
 import { AgentTab } from './components/AgentTab'
 import { GalleryTab } from './components/GalleryTab'
 import { ProjectsTab } from './components/ProjectsTab'
@@ -563,11 +562,24 @@ export default function App() {
 
   return (
     <div
-      className={`min-h-screen ${
+      className={`min-h-screen flex flex-col lg:flex-row ${
         darkMode ? 'dark bg-surface text-on-surface' : 'bg-surface text-on-surface'
       }`}
     >
-      <div className="max-w-7xl mx-auto px-6 py-6 lg:px-8">
+      {/* Side Navigation */}
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        totalCount={totalCount}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
+        serverOnline={serverOnline}
+        status={status}
+        checkServerStatus={checkServerStatus}
+      />
+
+      {/* Main Content Area */}
+      <div className="flex-1 min-w-0 px-6 py-6 lg:px-8 lg:py-8 max-w-7xl w-full mx-auto">
         {/* Toast Alerts Notification bar */}
         <NotificationToast message={toastMessage} onClose={() => setToastMessage(null)} />
 
@@ -596,20 +608,8 @@ export default function App() {
           </div>
         )}
 
-        {/* Header Section */}
-        <Header
-          darkMode={darkMode}
-          setDarkMode={setDarkMode}
-          serverOnline={serverOnline}
-          status={status}
-          checkServerStatus={checkServerStatus}
-        />
-
         {serverOnline && (
           <>
-            {/* Tabs Navigation */}
-            <Tabs activeTab={activeTab} setActiveTab={setActiveTab} totalCount={totalCount} />
-
             <main id="main-content" className="flex-grow">
               {/* TAB 1: ASK MEMORY AGENT */}
               {activeTab === 'chat' && (

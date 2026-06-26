@@ -33,4 +33,6 @@ fileignoreconfig:
   checksum: e1fd009f0d8bcc0b4d3849eeb9a964b02be0e50c92d58498520589a94cf2d04d
 - filename: frontend/src/components/SettingsTab.tsx
   checksum: 6468b44da12af62d87ff90167adf1340b5a8625e274dcdcdd1af182d6f0374e6
+- filename: frontend/src/components/Sidebar.tsx
+  checksum: b0a00955e388d7ce22c863b30ebed849de348e1b5d968e998ec3c3319d55bbbe
 version: ""
