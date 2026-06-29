@@ -6,17 +6,17 @@ fileignoreconfig:
 - filename: aw_vision/config.py
   checksum: d00acea7bdf1effad1f60a24800292cc649706de9b8500d9162c908edeb64644
 - filename: aw_vision/db.py
-  checksum: f1a09434a8618ce5abadf98f2f3e29da37a21fd10396a30b5441a3c569fb5f9d
+  checksum: 9e59ee68b5d6487f2cf345554e398a655c8087242236d14b46278d0eed73ba07
 - filename: AGENTS.md
   checksum: 6519a7c007f975609f1021acef754918212050f78a4e5e8e58e77c50c999565b
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
-  checksum: 5548ab658b03c2b8648d79625249f4a8154f42d50523d1fd1cb85c3fc0a5dc37
+  checksum: 3160da43f5b71659e7d976997f77bc3d8e51cde519a7f3fd69d7fb8952d6efac
 - filename: frontend/src/App.tsx
   checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
 - filename: frontend/src/components/ProjectsTab.tsx
-  checksum: a3b736362c200f11b0419c5c773e5d5ae7d1fcc1120c5c38aa1c7a83cf79c882
+  checksum: 888e41c1da3c5952f93ca8d8dcf47d2bae83adf08eab28d328466a2d3eecd337
 - filename: frontend/src/components/ScreenshotCarousel.tsx
   checksum: 2862c5828093c1da23a148b46672ded6e2b9b5038669c13747fa520e58cacc7e
 - filename: frontend/src/components/LightboxModal.tsx
@@ -24,15 +24,29 @@ fileignoreconfig:
 - filename: frontend/src/components/GalleryTab.tsx
   checksum: 76e79bb0c1d30be10d3a750690b71e6a95bcd11ea1b283d9c8ffefc0198cb9c6
 - filename: frontend/src/components/AgentTab.tsx
-  checksum: 23a2a4bff3ca8741c69bf6c7d6171665700be3280c0007f673a17c59e5d58388
+  checksum: f243d48d5f9d3179006fcf759da0547ba732b9da433d3f4be250c65d382f4d74
 - filename: aw_vision/agent.py
   checksum: 4d9d9bf55ce213b5331e7d545d1827c3ae1544de9a7ab3e8e4a090c556156e62
+- filename: frontend/package-lock.json
+  checksum: ca2767758ead2cdb15866f3a322a0e6813c79b1f68e03d30d5b32b6d097f9c04
 - filename: aw_vision/settings.py
-  checksum: da451548e43d4b4453cb077dfd11c59bee5b3c8fb7c91ea36ee64948c285f961
+  checksum: dfcbbe3727b560e87eb139b6cc2fab848b49d8183c3127904f4bdc0534cb7c7f
 - filename: aw_vision/gemini.py
   checksum: e1fd009f0d8bcc0b4d3849eeb9a964b02be0e50c92d58498520589a94cf2d04d
 - filename: frontend/src/components/SettingsTab.tsx
-  checksum: 6468b44da12af62d87ff90167adf1340b5a8625e274dcdcdd1af182d6f0374e6
+  checksum: 3b551f2009997bef9de2f1435a87968b1b4948a231cf6f3125971de4f21fb400
+- filename: aw_vision/watcher.py
+  checksum: 70670ca0612617d83a43b4bd6af0f67b4b72f1b28cdf4320ec962576e049f7b6
+- filename: frontend/src/components/PipelineTab.tsx
+  checksum: 97a1209450bf841ff9a916c2b9d6e94aea7a1b8a18c48b743d831c6fcbb477d4
+- filename: aw_vision/mcp_manager.py
+  checksum: 8c4692a058bf63dbdc5aae28650dec28d692b26b6789a1822d4f02b43629a92a
+- filename: frontend/src/components/McpSettings.tsx
+  checksum: 8a0dfac4b664677b2ccbcdf348c49b44fd7ce33fd8ad4aba4743341774c5c2b2
+- filename: aw_vision/gemini/vision.py
+  checksum: 4d76e009954759e94e99cd6c2d1892174369700e7f40a7bafd76d60c2b867db3
+- filename: aw_vision/processor/vision_sweep.py
+  checksum: d6075f2b3bfbbbbef4db8187f215c0b65cbfeb2eed2bf2e6d4523646bc790274
 - filename: frontend/src/components/Sidebar.tsx
   checksum: b0a00955e388d7ce22c863b30ebed849de348e1b5d968e998ec3c3319d55bbbe
 version: ""

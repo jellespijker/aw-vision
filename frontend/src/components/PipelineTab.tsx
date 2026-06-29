@@ -1,4 +1,5 @@
 import React from 'react'
+import axios from 'axios'
 import {
   Database,
   Cpu,
@@ -10,9 +11,14 @@ import {
   CheckCircle,
   Clock,
   Loader2,
-  AlertTriangle
+  AlertTriangle,
+  BarChart3,
+  Type,
+  Eye,
+  Hash,
+  Zap
 } from 'lucide-react'
-import type { DaemonStatus } from '../types'
+import type { DaemonStatus, ProcessingStats } from '../types'
 
 interface PipelineTabProps {
   status: DaemonStatus | null
@@ -37,6 +43,25 @@ export const PipelineTab: React.FC<PipelineTabProps> = ({
   reprocessing,
   handleBulkReprocessSidebar
 }) => {
+  const [stats, setStats] = React.useState<ProcessingStats | null>(null)
+  const [loadingStats, setLoadingStats] = React.useState<boolean>(false)
+
+  const fetchStats = async () => {
+    try {
+      setLoadingStats(true)
+      const resp = await axios.get('/api/stats/processing')
+      setStats(resp.data)
+    } catch (e) {
+      console.error('Error fetching processing stats', e)
+    } finally {
+      setLoadingStats(false)
+    }
+  }
+
+  React.useEffect(() => {
+    fetchStats()
+  }, [])
+
   return (
     <div className="font-sans space-y-6">
       {/* Untitled UI Page Header */}
@@ -279,6 +304,186 @@ export const PipelineTab: React.FC<PipelineTabProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Processing Performance Statistics Card */}
+            <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-5">
+              <div className="flex items-center justify-between border-b border-surface-container-high pb-4">
+                <h2 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-primary" /> Processing Performance
+                </h2>
+                <button
+                  type="button"
+                  onClick={fetchStats}
+                  disabled={loadingStats}
+                  className="p-1.5 text-text-secondary hover:text-neutral-dark hover:bg-surface-container-low rounded-md transition-all border border-surface-container-high cursor-pointer flex items-center justify-center disabled:opacity-50"
+                  title="Refresh statistics"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingStats ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+
+              {!stats ? (
+                <div className="flex items-center justify-center py-8 text-body-sm text-text-secondary">
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  Loading performance statistics...
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* High-Level Hero Banner */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Average pipeline time */}
+                    <div className="p-4 bg-surface-container-low rounded border border-surface-container-high space-y-1 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-3 opacity-10">
+                        <Clock className="w-12 h-12 text-primary" />
+                      </div>
+                      <span className="text-text-secondary font-medium text-body-sm">Avg Ingestion Time</span>
+                      <div className="flex items-baseline gap-1.5 pt-1">
+                        <span className="text-3xl font-bold text-neutral-dark font-mono">
+                          {stats.total?.mean ?? '0.00'}
+                        </span>
+                        <span className="text-technical-sm font-semibold text-text-secondary">seconds</span>
+                      </div>
+                      <p className="text-[11px] text-text-secondary font-sans leading-none">
+                        Sum of all local model execution times
+                      </p>
+                    </div>
+
+                    {/* Dataset execution count */}
+                    <div className="p-4 bg-surface-container-low rounded border border-surface-container-high space-y-1 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-3 opacity-10">
+                        <Activity className="w-12 h-12 text-primary" />
+                      </div>
+                      <span className="text-text-secondary font-medium text-body-sm">Telemetry Sample Size</span>
+                      <div className="flex items-baseline gap-1.5 pt-1">
+                        <span className="text-3xl font-bold text-neutral-dark font-mono">
+                          {stats.total?.count ?? 0}
+                        </span>
+                        <span className="text-technical-sm font-semibold text-text-secondary">runs</span>
+                      </div>
+                      <p className="text-[11px] text-text-secondary font-sans leading-none">
+                        Active executions (skips excluded)
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Visual Phase Metrics List */}
+                  <div className="space-y-5">
+                    <h3 className="text-technical-sm font-semibold text-text-secondary uppercase tracking-wider font-mono">
+                      Phase-by-Phase Performance
+                    </h3>
+
+                    {[
+                      {
+                        name: 'OCR Extraction',
+                        key: 'ocr' as const,
+                        icon: Type,
+                        desc: 'glm-ocr:q8_0 text sweep',
+                        colorClass: 'bg-indigo-600',
+                        barBg: 'bg-indigo-100 dark:bg-indigo-950/40',
+                        textClass: 'text-indigo-600 dark:text-indigo-400',
+                        gradient: 'from-indigo-500 to-indigo-600',
+                      },
+                      {
+                        name: 'Vision Analysis',
+                        key: 'vision' as const,
+                        icon: Eye,
+                        desc: 'gemma4 vision analysis',
+                        colorClass: 'bg-violet-600',
+                        barBg: 'bg-violet-100 dark:bg-violet-950/40',
+                        textClass: 'text-violet-600 dark:text-violet-400',
+                        gradient: 'from-violet-500 to-violet-600',
+                      },
+                      {
+                        name: 'Embedding Generation',
+                        key: 'embedding' as const,
+                        icon: Hash,
+                        desc: 'embeddinggemma coordinate',
+                        colorClass: 'bg-emerald-600',
+                        barBg: 'bg-emerald-100 dark:bg-emerald-950/40',
+                        textClass: 'text-emerald-600 dark:text-emerald-400',
+                        gradient: 'from-emerald-500 to-emerald-600',
+                      },
+                      {
+                        name: 'Total Pipeline',
+                        key: 'total' as const,
+                        icon: Zap,
+                        desc: 'Total processing iteration',
+                        colorClass: 'bg-primary',
+                        barBg: 'bg-surface-container',
+                        textClass: 'text-primary dark:text-primary-container',
+                        gradient: 'from-primary/80 to-primary',
+                      },
+                    ].map((phase) => {
+                      const pStats = stats[phase.key] || { mean: 0, min: 0, max: 0, count: 0 };
+                      
+                      // Calculate percentage for progress visualization relative to total pipeline time
+                      const percentage = stats.total?.mean 
+                        ? Math.min(Math.max((pStats.mean / stats.total.mean) * 100, 3), 100)
+                        : 0;
+
+                      const IconComponent = phase.icon;
+
+                      return (
+                        <div key={phase.key} className="space-y-2 group">
+                          {/* Header: Label, Desc, Mean */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="p-1.5 rounded bg-surface-container border border-surface-container-high text-neutral-dark group-hover:scale-105 transition-transform">
+                                <IconComponent className={`w-3.5 h-3.5 ${phase.textClass}`} />
+                              </div>
+                              <div>
+                                <h4 className="font-semibold text-body-sm text-neutral-dark leading-none">
+                                  {phase.name}
+                                </h4>
+                                <span className="text-[10px] text-text-secondary font-mono leading-none">
+                                  {phase.desc}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="text-right">
+                              <span className="text-body-md font-bold text-neutral-dark font-mono">
+                                {pStats.mean}s
+                              </span>
+                              <p className="text-[10px] text-text-secondary leading-none">
+                                Average
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Progress Bar & Custom Scale Indicators */}
+                          <div className="space-y-1.5">
+                            <div className={`w-full h-3 ${phase.barBg} rounded-full overflow-hidden relative border border-surface-container-high`}>
+                              <div
+                                  className={`h-full bg-gradient-to-r ${phase.gradient} rounded-full transition-all duration-500`}
+                                  style={{ width: `${percentage}%` }}
+                              />
+                            </div>
+
+                            {/* Sub-row: Min, Max, Count */}
+                            <div className="flex justify-between items-center text-[10px] font-mono text-text-secondary select-none">
+                              <div className="flex gap-4">
+                                <span className="flex items-center gap-1 hover:text-neutral-dark transition-colors">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-success-green opacity-80" />
+                                  Min: <strong className="font-semibold text-neutral-dark">{pStats.min}s</strong>
+                                </span>
+                                <span className="flex items-center gap-1 hover:text-neutral-dark transition-colors">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-danger-primary opacity-80" />
+                                  Max: <strong className="font-semibold text-neutral-dark">{pStats.max}s</strong>
+                                </span>
+                              </div>
+                              <span className="bg-surface-container-low px-1.5 py-0.5 rounded border border-surface-container-high">
+                                {pStats.count} samples
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Right Column: Reprocessing & Privacy (5 columns) */}

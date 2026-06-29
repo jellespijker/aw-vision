@@ -330,6 +330,64 @@ TOOLS = {
     "query_jira": tool_query_jira,
 }
 
+
+# ---------------------------------------------------------
+# Dynamic MCP tools (assigned to the "agent" slot)
+# ---------------------------------------------------------
+
+
+def build_mcp_agent_tools() -> dict:
+    """Discover MCP tools assigned to the Ask Memory Agent slot.
+
+    Returns a mapping of LLM-friendly tool name -> descriptor dict. Connection or
+    discovery failures degrade gracefully to an empty mapping so the agent keeps
+    working with its built-in tools.
+    """
+    try:
+        from aw_vision.mcp_manager import mcp_manager
+
+        pairs = mcp_manager.tools_for_slot("agent")
+    except Exception as e:
+        print(f"[Memory Agent] Failed to load MCP tools: {e}")
+        return {}
+
+    tools: dict = {}
+    for cfg, tool in pairs:
+        base = re.sub(r"[^a-zA-Z0-9_]", "_", tool.get("name", "tool")).strip("_").lower() or "tool"
+        name = f"mcp_{base}"
+        if name in tools:
+            # Disambiguate collisions across servers by prefixing the server name.
+            server_slug = re.sub(r"[^a-zA-Z0-9_]", "_", cfg.get("name", "srv")).strip("_").lower()
+            name = f"mcp_{server_slug}_{base}"
+        tools[name] = {
+            "server_id": cfg["id"],
+            "server_name": cfg.get("name", "MCP Server"),
+            "tool_name": tool.get("name"),
+            "schema": tool.get("input_schema") or {},
+            "description": (tool.get("description") or "").strip(),
+        }
+    return tools
+
+
+def _execute_mcp_tool(descriptor: dict, raw_arg: str) -> str:
+    """Translate the agent's single-string argument into MCP tool arguments and call it."""
+    from aw_vision.mcp_manager import mcp_manager
+
+    arguments: dict = {}
+    raw = (raw_arg or "").strip()
+    if raw and raw.lower() != "none":
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                arguments = parsed
+            else:
+                arguments = mcp_manager._build_query_args({"input_schema": descriptor["schema"]}, str(parsed))
+        except (json.JSONDecodeError, ValueError):
+            # Not JSON: treat the whole string as a free-text query argument.
+            arguments = mcp_manager._build_query_args({"input_schema": descriptor["schema"]}, raw)
+
+    return mcp_manager.call_tool(descriptor["server_id"], descriptor["tool_name"], arguments)
+
 # ---------------------------------------------------------
 # LangGraph ReAct Agent State Machine
 # ---------------------------------------------------------
@@ -418,6 +476,23 @@ def run_agent_node(state: AgentState) -> AgentState:
         "- aggregate_project_hours(): Return total active hours spent on each project number.",
         "- query_github(query): Find commits, PRs, or issues on user's GitHub repositories.",
         "- query_jira(jql): Search Jira issues.",
+    ]
+
+    # Append any MCP tools the user assigned to the Ask Memory Agent.
+    mcp_agent_tools = build_mcp_agent_tools()
+    if mcp_agent_tools:
+        prompt_lines.append("Additionally, these external MCP tools are available (call them exactly as named):")
+        for tname, desc in mcp_agent_tools.items():
+            summary = desc["description"] or "External MCP tool."
+            if len(summary) > 160:
+                summary = summary[:160] + "..."
+            prompt_lines.append(f"- {tname}(input): [{desc['server_name']}] {summary}")
+        prompt_lines.append(
+            "  For MCP tools, the argument after the comma may be a plain search string OR a compact JSON object "
+            "of arguments (e.g. CALL_TOOL: mcp_search_issues, {\"jql\": \"project = ABC\"})."
+        )
+
+    prompt_lines += [
         "",
         "CRITICAL: Always perform 'search_screenshots_semantic' first if the user is asking about past active sessions,",
         "such as browsing website pages, looking for sneakers, reading files, or coding topics.",
@@ -454,15 +529,25 @@ def run_agent_node(state: AgentState) -> AgentState:
     prompt = "\n".join(prompt_lines)
 
     agent_provider = settings_store.get("agent_provider")
+    agent_model = settings_store.get("agent_model") or ""
+
+    # Auto-Provider Fallback: if agent_provider is gemini but the model name is local Gemma, fall back to Ollama
+    if agent_provider == "gemini" and "gemma" in agent_model.lower():
+        print(f"[Memory Agent] Gemma model '{agent_model}' detected with Gemini provider. Automatically routing to local Ollama for stability.")
+        agent_provider = "ollama"
+
     use_gemini = (agent_provider == "gemini" and is_internet_online())
 
     if use_gemini:
-        print(f"[Memory Agent] Routing agent reasoning to Gemini using '{settings_store.get('agent_model')}'...")
+        print(f"[Memory Agent] Routing agent reasoning to Gemini using '{agent_model}'...")
         ctx_size = settings_store.get_int("agent_context_size")
         reply = run_gemini_chat_agent(prompt=prompt, history=[], context_size=ctx_size)
     else:
         # Fallback to local Ollama
-        model = settings_store.get("ollama_vision_model") or config.vision_model
+        model = agent_model or settings_store.get("ollama_vision_model") or config.vision_model
+        # Resolve model name to an installed local model name if it contains Gemma 4 variations
+        if "gemma-4" in model or "gemma4" in model or model == "gemma-4-31b-it" or model == "gemma-4-26b-a4b-it":
+            model = "gemma4:e2b-it-qat"
         print(f"[Memory Agent] Routing agent reasoning to Ollama using '{model}'...")
         try:
             url = f"{config.ollama_host}/api/generate"
@@ -575,7 +660,16 @@ def run_tools_node(state: AgentState) -> AgentState:
         except Exception as e:
             result = f"Error executing tool: {e}"
     else:
-        result = f"Tool '{tool_name}' is not registered."
+        # Fall back to dynamically-discovered MCP tools assigned to the agent.
+        mcp_agent_tools = build_mcp_agent_tools()
+        if tool_name in mcp_agent_tools:
+            print(f"Executing MCP Agent Tool: {tool_name} with arg '{tool_arg}'")
+            try:
+                result = _execute_mcp_tool(mcp_agent_tools[tool_name], tool_arg)
+            except Exception as e:
+                result = f"Error executing MCP tool: {e}"
+        else:
+            result = f"Tool '{tool_name}' is not registered."
 
     if len(result) > 3000:
         print(f"Tool output length ({len(result)}) exceeds threshold. Summarizing...")

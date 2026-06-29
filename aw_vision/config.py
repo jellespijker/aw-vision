@@ -97,6 +97,13 @@ class Config:
 
     @property
     def screenshot_interval(self) -> int:
+        try:
+            from aw_vision.settings import settings_store
+            val = settings_store.get("screenshot_interval_seconds")
+            if val:
+                return int(val)
+        except Exception:
+            pass
         return int(self.settings["watcher"]["screenshot_interval_seconds"])
 
     @property
@@ -113,7 +120,11 @@ class Config:
 
     @property
     def db_dir(self) -> Path:
-        p = Path(os.path.expanduser("~/.local/share/aw-vision/db"))
+        env_dir = os.getenv("LANCE_DB_DIR")
+        if env_dir:
+            p = Path(env_dir)
+        else:
+            p = Path(os.path.expanduser("~/.local/share/aw-vision/db"))
         p.mkdir(parents=True, exist_ok=True)
         return p
 
@@ -131,14 +142,35 @@ class Config:
 
     @property
     def check_interval(self) -> int:
+        try:
+            from aw_vision.settings import settings_store
+            val = settings_store.get("check_interval_seconds")
+            if val:
+                return int(val)
+        except Exception:
+            pass
         return int(self.settings["processing"]["check_interval_seconds"])
 
     @property
     def max_screenshot_lifetime_days(self) -> int:
+        try:
+            from aw_vision.settings import settings_store
+            val = settings_store.get("max_screenshot_lifetime_days")
+            if val:
+                return int(val)
+        except Exception:
+            pass
         return int(self.settings["processing"].get("max_screenshot_lifetime_days", 14))
 
     @property
     def cleanup_interval_hours(self) -> int:
+        try:
+            from aw_vision.settings import settings_store
+            val = settings_store.get("cleanup_interval_hours")
+            if val:
+                return int(val)
+        except Exception:
+            pass
         return int(self.settings["processing"].get("cleanup_interval_hours", 1))
 
     @property
@@ -173,22 +205,21 @@ class Config:
     def projects_file(self) -> Path:
         return Path(self.settings.get("projects_file", "projects.json"))
 
-    def load_projects(self) -> list:
-        p_file = self.projects_file
-        if p_file.exists():
-            try:
-                with open(p_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"Error loading projects.json: {e}")
-        return []
+    def load_projects(self, include_inactive: bool = False) -> list:
+        try:
+            from aw_vision.db import db
+            return db.load_projects(include_inactive=include_inactive)
+        except Exception as e:
+            print(f"Error lazy-loading projects from db in config: {e}")
+            return []
 
     def save_projects(self, projects: list):
         try:
-            with open(self.projects_file, "w", encoding="utf-8") as f:
-                json.dump(projects, f, indent=2, ensure_ascii=False)
+            from aw_vision.db import db
+            for p in projects:
+                db.save_project(p)
         except Exception as e:
-            print(f"Error saving projects.json: {e}")
+            print(f"Error lazy-saving projects to db in config: {e}")
 
 
 config = Config()

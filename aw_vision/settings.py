@@ -81,6 +81,10 @@ class SettingsStore:
             "agent_context_size": "8192",
             "max_ocr_chars": "1200",
             "max_tool_result_chars": "3000",
+            "screenshot_interval_seconds": "60",
+            "check_interval_seconds": "10",
+            "max_screenshot_lifetime_days": "14",
+            "cleanup_interval_hours": "1",
         }
         self.load_all()
 
@@ -177,6 +181,10 @@ class SettingsStore:
                 "agent_context_size",
                 "max_ocr_chars",
                 "max_tool_result_chars",
+                "screenshot_interval_seconds",
+                "check_interval_seconds",
+                "max_screenshot_lifetime_days",
+                "cleanup_interval_hours",
             ):
                 try:
                     res[k] = int(v)

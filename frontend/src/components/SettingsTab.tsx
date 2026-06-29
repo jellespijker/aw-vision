@@ -16,8 +16,12 @@ import {
   EyeOff,
   RefreshCw,
   Sparkles,
-  ShieldAlert
+  ShieldAlert,
+  Plug,
+  Camera,
+  Clock
 } from 'lucide-react'
+import { McpSettings } from './McpSettings'
 
 interface SettingsTabProps {
   showNotification: (text: string, type: 'success' | 'danger') => void
@@ -55,7 +59,11 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
     agent_model: 'gemma4:e2b-it-qat',
     agent_context_size: 8192,
     max_ocr_chars: 1200,
-    max_tool_result_chars: 3000
+    max_tool_result_chars: 3000,
+    screenshot_interval_seconds: 60,
+    check_interval_seconds: 10,
+    max_screenshot_lifetime_days: 14,
+    cleanup_interval_hours: 1
   })
 
   const [loading, setLoading] = useState<boolean>(true)
@@ -63,7 +71,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
   const [showKey, setShowKey] = useState<boolean>(false)
 
   // Active settings sub-section (tab within the Settings page)
-  type SettingsSection = 'provider' | 'models' | 'agent' | 'database'
+  type SettingsSection = 'provider' | 'models' | 'agent' | 'capture' | 'database' | 'mcp'
   const [section, setSection] = useState<SettingsSection>('provider')
 
   // API testing states
@@ -262,7 +270,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
     { id: 'provider', label: 'Provider', icon: Cpu },
     { id: 'models', label: 'Pipeline Models', icon: isGeminiActive ? Sparkles : Server },
     { id: 'agent', label: 'Memory Agent', icon: Bot },
-    { id: 'database', label: 'Database', icon: Database }
+    { id: 'capture', label: 'Capture', icon: Camera },
+    { id: 'database', label: 'Database', icon: Database },
+    { id: 'mcp', label: 'MCP Integrations', icon: Plug }
   ]
 
   return (
@@ -311,6 +321,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
         })}
       </div>
 
+      {section === 'mcp' ? (
+        <McpSettings showNotification={showNotification} />
+      ) : (
       <form onSubmit={saveSettings} className="space-y-6">
         {/* SECTION: Provider */}
         <div className={`max-w-3xl space-y-6 ${section === 'provider' ? '' : 'hidden'}`}>
@@ -777,6 +790,76 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
 
         </div>
 
+        {/* SECTION: Capture */}
+        <div className={`max-w-3xl space-y-6 ${section === 'capture' ? '' : 'hidden'}`}>
+          <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-5">
+            <h3 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2 border-b border-surface-container-high pb-3">
+              <Camera className="w-5 h-5 text-primary" /> Capture &amp; Retention
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label htmlFor="screenshotIntervalInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                  <Camera className="w-3.5 h-3.5" /> Screenshot Interval (seconds)
+                </label>
+                <input
+                  id="screenshotIntervalInput"
+                  type="number"
+                  min="5"
+                  value={settings.screenshot_interval_seconds ?? 60}
+                  onChange={(e) => handleSettingChange('screenshot_interval_seconds', parseInt(e.target.value) || 0)}
+                  className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark outline-none focus:border-primary font-mono transition-colors"
+                />
+                <p className="text-[11px] text-text-secondary">How often the watcher captures the active screen.</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="checkIntervalInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" /> Processing Check Interval (seconds)
+                </label>
+                <input
+                  id="checkIntervalInput"
+                  type="number"
+                  min="1"
+                  value={settings.check_interval_seconds ?? 10}
+                  onChange={(e) => handleSettingChange('check_interval_seconds', parseInt(e.target.value) || 0)}
+                  className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark outline-none focus:border-primary font-mono transition-colors"
+                />
+                <p className="text-[11px] text-text-secondary">How often the processor daemon scans the pending queue.</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="lifetimeInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5" /> Screenshot Retention (days)
+                </label>
+                <input
+                  id="lifetimeInput"
+                  type="number"
+                  min="1"
+                  value={settings.max_screenshot_lifetime_days ?? 14}
+                  onChange={(e) => handleSettingChange('max_screenshot_lifetime_days', parseInt(e.target.value) || 0)}
+                  className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark outline-none focus:border-primary font-mono transition-colors"
+                />
+                <p className="text-[11px] text-text-secondary">Raw screenshot files are purged after this many days.</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="cleanupInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5" /> Cleanup Interval (hours)
+                </label>
+                <input
+                  id="cleanupInput"
+                  type="number"
+                  min="1"
+                  value={settings.cleanup_interval_hours ?? 1}
+                  onChange={(e) => handleSettingChange('cleanup_interval_hours', parseInt(e.target.value) || 0)}
+                  className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark outline-none focus:border-primary font-mono transition-colors"
+                />
+                <p className="text-[11px] text-text-secondary">How often the retention cleanup sweep runs.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* SECTION: Database */}
         <div className={`max-w-3xl space-y-6 ${section === 'database' ? '' : 'hidden'}`}>
           {/* Database Re-embedding Progress and Controls */}
@@ -893,6 +976,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
           </button>
         </div>
       </form>
+      )}
     </div>
   )
 }

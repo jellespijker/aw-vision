@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import psutil
 from fastapi import Body, FastAPI, HTTPException
@@ -37,8 +37,32 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
+    # Guard against systemd restart races where the new process starts before the
+    # old one releases the socket.  FastAPI's startup event fires *before* uvicorn
+    # attempts to bind the port, so a port-already-in-use failure is not yet visible
+    # here.  If another PID is already listening on our port, we're a duplicate
+    # instance that is about to fail — skip the background workers to avoid
+    # spurious screenshots from every failing restart cycle.
+    our_pid = os.getpid()
+    our_port = config.server_port
+    try:
+        for conn in psutil.net_connections(kind="inet"):
+            if (
+                conn.laddr
+                and conn.laddr.port == our_port
+                and conn.status == "LISTEN"
+                and conn.pid
+                and conn.pid != our_pid
+            ):
+                print(
+                    f"[startup] Port {our_port} already held by PID {conn.pid}. "
+                    "Skipping background services — this instance will exit shortly."
+                )
+                return
+    except Exception as e:
+        print(f"[startup] Port check failed ({e}), proceeding with startup.")
+
     print("Starting aw-vision services...")
-    # Start background threads
     watcher.start()
     processor.start()
 
@@ -64,6 +88,8 @@ class ProjectModel(BaseModel):
     project_number: str
     description: str
     work_entailment: str
+    is_active: bool = True
+    created_at: Optional[float] = None
 
 
 class LabelRequest(BaseModel):
@@ -85,6 +111,26 @@ class SettingsUpdateRequest(BaseModel):
 
 class TestKeyRequest(BaseModel):
     api_key: str
+
+
+class MCPServerModel(BaseModel):
+    id: Optional[str] = None
+    name: str
+    enabled: bool = True
+    transport: str = "stdio"
+    command: Optional[str] = ""
+    args: Optional[List[str]] = None
+    env: Optional[dict] = None
+    cwd: Optional[str] = ""
+    url: Optional[str] = ""
+    auth_type: Optional[str] = "none"
+    auth_token: Optional[str] = ""
+    header_name: Optional[str] = "Authorization"
+    assignments: Optional[List[str]] = None
+
+
+class MCPTestRequest(BaseModel):
+    server: MCPServerModel
 
 
 # ---------------------------------------------------------
@@ -163,6 +209,17 @@ def get_status():
     }
 
 
+@app.get("/api/stats/processing")
+def get_processing_stats():
+    """Get mean, min, and max processing times for each screenshot processing phase."""
+    try:
+        from aw_vision.db import db
+        return db.get_processing_stats()
+    except Exception as e:
+        print(f"Error computing processing stats: {e}")
+        return {}
+
+
 @app.post("/api/query")
 def post_query(request: QueryRequest):
     """Run conversational queries using the LangGraph ReAct Agent."""
@@ -231,7 +288,7 @@ def get_screenshot(filename: str):
 @app.get("/api/projects")
 def get_projects():
     """Retrieve lists of configured projects and total tracked hours per project."""
-    projects_list = config.load_projects()
+    projects_list = db.load_projects(include_inactive=True)
     stats = db.get_project_statistics()
 
     # Merge statistics with list
@@ -241,12 +298,13 @@ def get_projects():
         enriched.append({**p, "tracked_hours": round(stats.get(p_num, 0.0), 2)})
 
     # Append unclassified/none stats
-    if "None" in stats:
+    if "None" in stats or len(enriched) > 0:
         enriched.append(
             {
                 "project_number": "Unclassified",
                 "description": "Activities not mapped to any specific project guidelines",
                 "work_entailment": "General work, browsing, or unclassified screen states.",
+                "is_active": True,
                 "tracked_hours": round(stats.get("None", 0.0), 2),
             }
         )
@@ -255,17 +313,274 @@ def get_projects():
 
 
 @app.post("/api/projects")
-def save_projects(projects: List[ProjectModel]):
-    """Update projects configuration list."""
+def save_projects(projects: Union[ProjectModel, List[ProjectModel]]):
+    """Add or update projects."""
     try:
-        data = [p.dict() for p in projects]
-        config.save_projects(data)
+        if isinstance(projects, list):
+            data = [p.dict() for p in projects]
+            config.save_projects(data)
+            num = len(projects)
+        else:
+            data = [projects.dict()]
+            config.save_projects(data)
+            num = 1
         return {
             "status": "success",
-            "message": f"Successfully updated {len(projects)} projects.",
+            "message": f"Successfully updated {num} project(s).",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save projects: {e}")
+
+
+@app.delete("/api/projects/{project_number}")
+def delete_project(project_number: str):
+    """Delete a project from LanceDB."""
+    try:
+        db.delete_project(project_number)
+        return {"status": "success", "message": f"Project '{project_number}' successfully deleted."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete project: {e}")
+
+
+@app.patch("/api/projects/{project_number}/toggle-active")
+def toggle_project_active(project_number: str):
+    """Toggle the active status of a project."""
+    try:
+        new_status = db.toggle_project_active(project_number)
+        return {
+            "status": "success",
+            "is_active": new_status,
+            "message": f"Project '{project_number}' is now {'active' if new_status else 'inactive'}."
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to toggle project status: {e}")
+
+
+@app.post("/api/projects/suggest")
+def suggest_projects():
+    """Analyze recent unclassified screenshots and generate AI suggested projects."""
+    try:
+        from aw_vision.settings import settings_store
+        import json
+        import requests
+
+        # 1. Fetch up to 100 recent unclassified screenshots
+        where_clause = "project_number IS NULL OR project_number = 'None' OR project_number = ''"
+        unclassified = db.query_metadata(where_clause, limit=100)
+
+        if not unclassified:
+            return {
+                "status": "success",
+                "suggestions": [],
+                "message": "No unclassified screenshots found to generate suggestions."
+            }
+
+        # 2. Compile activity details to form the prompt
+        activities = []
+        for r in unclassified:
+            app_name = r.get("app_name") or "Unknown App"
+            title = r.get("window_title") or "Untitled Window"
+            desc = r.get("description") or ""
+            unique = r.get("unique_things") or ""
+            act_str = f"- App: {app_name} | Window: {title}"
+            if desc:
+                act_str += f" | Description: {desc}"
+            if unique:
+                act_str += f" | Unique Elements: {unique}"
+            activities.append(act_str)
+
+        activities_text = "\n".join(activities)
+
+        prompt = f"""
+Analyze the following list of active, unclassified computer activities from the user's historical screen tracking.
+Group or cluster these activities into 2 to 4 potential high-level work projects. Each suggested project must follow the professional work styles and guidelines of the user's existing projects.
+
+Each suggested project must include:
+1. `project_number`: A descriptive, short, uppercase code matching the user's standard style (e.g., "DEV - [Project Name]" or "RESEARCH - [Project Name]").
+2. `description`: A clear, professional summary of the project's purpose and context.
+3. `work_entailment`: A detailed description of the tasks, files, tools, or workflows that are part of this project.
+
+Here is the list of recent unclassified activities:
+{activities_text}
+
+You must respond in valid JSON format matching this exact schema:
+{{
+  "suggestions": [
+    {{
+      "project_number": "string",
+      "description": "string",
+      "work_entailment": "string"
+    }}
+  ]
+}}
+"""
+
+        # 3. Determine provider
+        provider = settings_store.get("provider")
+        suggestions_data = []
+
+        if provider == "gemini":
+            from aw_vision.gemini import is_internet_online, _get_resolved_llm_model, gemini_request_with_retry
+            if is_internet_online():
+                key = settings_store.get("gemini_api_key")
+                model = settings_store.get("gemini_llm_model")
+                model = _get_resolved_llm_model(model)
+                if not key:
+                    raise HTTPException(status_code=400, detail="Gemini API key is not configured.")
+
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"responseMimeType": "application/json"}
+                }
+                resp = gemini_request_with_retry("POST", url, json_data=payload, timeout=60.0)
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    text_output = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                    parsed = json.loads(text_output)
+                    suggestions_data = parsed.get("suggestions", [])
+            else:
+                # Fallback to Ollama if offline
+                provider = "ollama"
+
+        if provider != "gemini":
+            # Call Ollama
+            from aw_vision.settings import settings_store
+            model = settings_store.get("ollama_vision_model") or config.vision_model
+            url = f"{config.ollama_host}/api/generate"
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.2, "num_ctx": 8192},
+                "keep_alive": 0,
+            }
+            resp = requests.post(url, json=payload, timeout=60.0)
+            if resp.status_code == 200:
+                text_output = resp.json().get("response", "").strip()
+                parsed = json.loads(text_output)
+                suggestions_data = parsed.get("suggestions", [])
+            else:
+                raise HTTPException(status_code=500, detail=f"Ollama suggestions generation failed: {resp.status_code} - {resp.text}")
+
+        # Ensure all suggestions have is_active = True
+        for sugg in suggestions_data:
+            sugg["is_active"] = True
+
+        return {
+            "status": "success",
+            "suggestions": suggestions_data,
+            "message": f"Successfully generated {len(suggestions_data)} suggested projects based on unclassified activities."
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to generate project suggestions: {e}")
+
+
+RESOLUTION_MAP = {
+    "1m": 60.0,
+    "5m": 300.0,
+
+    "10m": 600.0,
+    "15m": 900.0,
+    "30m": 1800.0,
+    "1h": 3600.0,
+    "1d": 86400.0,
+    "1w": 604800.0,
+    "1M": 2592000.0,  # 30 days
+}
+
+
+@app.get("/api/projects/timeline")
+def get_projects_timeline(start_time: float, end_time: float, resolution: str = "1h"):
+    """Fetch aggregated timeline blocks for each project at the requested resolution."""
+    try:
+        from aw_vision.db import db
+        res_seconds = RESOLUTION_MAP.get(resolution, 3600.0)
+
+        # 1. Fetch binned timeline from LanceDB
+        data = db.get_binned_timeline(start_time, end_time, res_seconds)
+
+        # 2. Get list of configured projects to enrich descriptions and generate colors
+        projects_list = config.load_projects()
+        projects_map = {p["project_number"]: p for p in projects_list}
+
+        # Generate HSL colors based on project_number hash
+        import hashlib
+
+        def get_project_color(proj_num: str) -> str:
+            if proj_num == "Unclassified":
+                return "#a3a3a3"  # Slate gray
+
+            # Deterministic color from hashing
+            h = hashlib.md5(proj_num.encode("utf-8")).hexdigest()
+            # Convert first 4 bytes of hash to a hue value between 0 and 360
+            hue = int(h[:4], 16) % 360
+            # Premium saturated color palette: saturation 65%, lightness 55%
+            return f"hsl({hue}, 65%, 55%)"
+
+        # 3. Format response matching frontend TypeScript types
+        enriched_projects = []
+        for p_num, bins in data["projects"].items():
+            desc = ""
+            if p_num in projects_map:
+                desc = projects_map[p_num]["description"]
+            elif p_num == "Unclassified":
+                desc = "Activities not mapped to any specific project guidelines"
+
+            # Calculate total duration in range
+            total_dur = sum(b["duration_seconds"] for b in bins)
+
+            enriched_projects.append({
+                "project_number": p_num,
+                "description": desc,
+                "color": get_project_color(p_num),
+                "total_duration_seconds": total_dur,
+                "bins": bins
+            })
+
+        # Sort: Unclassified is always last; other projects sorted by duration descending
+        enriched_projects.sort(key=lambda x: (x["project_number"] == "Unclassified", -x["total_duration_seconds"], x["project_number"]))
+
+        # 4. Generate timestamped labels for column headers
+        timeline_headers = []
+        from datetime import datetime
+        for i in range(data["num_bins"]):
+            bin_time = data["aligned_start"] + i * res_seconds
+            dt = datetime.fromtimestamp(bin_time)
+
+            if resolution in ("1m", "5m", "10m", "15m", "30m"):
+                label = dt.strftime("%H:%M")
+            elif resolution == "1h":
+                label = dt.strftime("%H:%M")
+            elif resolution == "1d":
+                label = dt.strftime("%b %d")
+            elif resolution == "1w":
+                label = dt.strftime("%b %d")
+            elif resolution == "1M":
+                label = dt.strftime("%B")
+            else:
+                label = dt.strftime("%Y-%m-%d %H:%M")
+
+            timeline_headers.append({
+                "timestamp": bin_time,
+                "label": label
+            })
+
+        return {
+            "projects": enriched_projects,
+            "timeline_headers": timeline_headers
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to fetch projects timeline: {e}")
 
 
 @app.get("/api/history")
@@ -807,6 +1122,74 @@ def force_reembed():
     from aw_vision.db import db
     db.trigger_batch_reembedding(force=True)
     return {"status": "success", "message": "Background re-embedding recalculation initiated."}
+
+
+# ---------------------------------------------------------
+# MCP (Model Context Protocol) Integration Endpoints
+# ---------------------------------------------------------
+
+
+@app.get("/api/mcp/slots")
+def get_mcp_slots():
+    """Return the list of assignable pipeline/agent slots an MCP server can attach to."""
+    from aw_vision.mcp_manager import SLOTS
+
+    return {"slots": SLOTS}
+
+
+@app.get("/api/mcp/servers")
+def list_mcp_servers():
+    """List all configured MCP servers with secrets masked."""
+    from aw_vision.mcp_manager import mcp_store, mask_server
+
+    return {"servers": [mask_server(s) for s in mcp_store.list()]}
+
+
+@app.post("/api/mcp/servers")
+def save_mcp_server(payload: MCPServerModel):
+    """Create or update an MCP server configuration."""
+    from aw_vision.mcp_manager import mcp_store, mask_server
+
+    try:
+        saved = mcp_store.save(payload.dict(exclude_none=False))
+        return {"status": "success", "server": mask_server(saved)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save MCP server: {e}")
+
+
+@app.delete("/api/mcp/servers/{server_id}")
+def delete_mcp_server(server_id: str):
+    """Delete an MCP server configuration."""
+    from aw_vision.mcp_manager import mcp_store
+
+    existed = mcp_store.delete(server_id)
+    if not existed:
+        raise HTTPException(status_code=404, detail="MCP server not found.")
+    return {"status": "success", "message": f"Deleted MCP server '{server_id}'."}
+
+
+@app.post("/api/mcp/servers/test")
+def test_mcp_server(payload: MCPTestRequest):
+    """Connect to an MCP server (saved or unsaved) and return its discovered tools."""
+    from aw_vision.mcp_manager import mcp_manager, mcp_store, normalize_server
+
+    cfg = normalize_server(payload.server.dict(exclude_none=False))
+    # If the token came back masked, substitute the stored secret so test still works.
+    from aw_vision.mcp_manager import SECRET_MASK
+
+    if cfg.get("auth_token") == SECRET_MASK and cfg.get("id"):
+        existing = mcp_store.get(cfg["id"])
+        if existing:
+            cfg["auth_token"] = existing.get("auth_token", "")
+            if cfg.get("env"):
+                merged_env = dict(existing.get("env", {}))
+                for k, v in cfg["env"].items():
+                    if v and v != SECRET_MASK:
+                        merged_env[k] = v
+                cfg["env"] = merged_env
+
+    result = mcp_manager.test_server(cfg)
+    return result
 
 
 # Serve compiled static React files in production/standalone mode
