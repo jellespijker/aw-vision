@@ -1,4 +1,5 @@
 """Phase 2 batch sweep: per-screenshot vision analysis & project classification."""
+
 import json
 import time
 import traceback
@@ -10,6 +11,24 @@ from aw_vision.config import config
 from aw_vision.db import db
 
 
+def mcp_enrich(slot: str, query: str) -> str:
+    """Fetch external MCP context assigned to a given pipeline prompt slot.
+
+    Returns an empty string when no MCP server is assigned to ``slot`` (the common
+    case), guaranteeing zero behavioural or performance impact unless the user has
+    explicitly wired an MCP server into that prompt. Never raises.
+    """
+    try:
+        from aw_vision.mcp_manager import mcp_manager
+
+        if not mcp_manager.servers_for_slot(slot):
+            return ""
+        return mcp_manager.gather_context_for_slot(slot, query)
+    except Exception as e:
+        print(f"[MCP] Pipeline enrichment failed for slot '{slot}': {e}")
+        return ""
+
+
 class VisionSweepMixin:
     def _phase2_vision_sweep(self, batch_items, projects, N, failed_ids):
         """Vision analysis sweep: 2-pass local pipeline or combined Gemini call per item."""
@@ -19,16 +38,19 @@ class VisionSweepMixin:
                 self.current_stage = f"Phase 2/3 (Vision Analysis): Item {self.current_batch_processed + idx + 1}/{self.current_batch_total}"
             try:
                 vision_start = time.time()
-                self.log_step(rec_id, f"Phase 2/3: Vision model analysis & Project classification (item {idx + 1}/{N} in batch)")
+                self.log_step(
+                    rec_id, f"Phase 2/3: Vision model analysis & Project classification (item {idx + 1}/{N} in batch)"
+                )
 
                 # Only run Vision if not already processed (meaning we don't have description)
                 if "description" not in meta or meta["description"] is None:
                     full_img_filename = f"{img_path.stem}_full.png"
                     full_img_path = img_path.parent / full_img_filename
 
+                    from aw_vision.gemini import is_internet_online, run_gemini_combined_ocr_vision
                     from aw_vision.settings import settings_store
-                    from aw_vision.gemini import run_gemini_combined_ocr_vision, is_internet_online
-                    use_gemini = (settings_store.get("provider") == "gemini" and is_internet_online())
+
+                    use_gemini = settings_store.get("provider") == "gemini" and is_internet_online()
 
                     if use_gemini:
                         cached_ocr = meta.get("ocr_text")
@@ -39,13 +61,20 @@ class VisionSweepMixin:
                         existing_tags = db.get_all_unique_tags()
                         if len(existing_tags) > 100:
                             existing_tags = existing_tags[:100]
+
+                        # Optional external MCP context for the combined cloud prompt.
+                        mcp_query = f"{meta.get('app_name', '')} {meta.get('window_title', '')} {(cached_ocr or '')[:200]}".strip()
+                        mcp_ctx_combined = mcp_enrich("gemini_combined", mcp_query)
+                        if mcp_ctx_combined:
+                            self.log_step(rec_id, "Injected external MCP context into Gemini combined prompt.")
                         try:
                             res = run_gemini_combined_ocr_vision(
                                 img_path=img_path,
                                 full_img_path=full_img_path if full_img_path.exists() else None,
                                 projects=projects,
                                 existing_tags=existing_tags,
-                                ocr_text=cached_ocr if cached_ocr else None
+                                ocr_text=cached_ocr if cached_ocr else None,
+                                extra_context=mcp_ctx_combined or None,
                             )
                             meta["ocr_text"] = res.get("ocr_text", "") or cached_ocr or ""
                             meta["description"] = res.get("description", "No description generated.")
@@ -59,7 +88,9 @@ class VisionSweepMixin:
                             with open(meta_path, "w", encoding="utf-8") as f:
                                 json.dump(meta, f, indent=2)
 
-                            self.log_step(rec_id, f"Gemini Combined Analysis complete. Description: {meta['description']}")
+                            self.log_step(
+                                rec_id, f"Gemini Combined Analysis complete. Description: {meta['description']}"
+                            )
                             continue
                         except Exception as eg:
                             self.log_step(rec_id, f"Error calling Gemini, falling back to local Ollama: {eg}")
@@ -108,7 +139,9 @@ class VisionSweepMixin:
                     app_freqs = db.get_app_project_frequencies(app_name)
                     app_freq_str = ""
                     if app_freqs:
-                        app_freq_str = "\n".join([f"  * Project {proj}: score {freq:.1f}" for proj, freq in app_freqs.items()])
+                        app_freq_str = "\n".join(
+                            [f"  * Project {proj}: score {freq:.1f}" for proj, freq in app_freqs.items()]
+                        )
                     else:
                         app_freq_str = f"  * No historical project associations for '{app_name}'."
 
@@ -130,8 +163,19 @@ class VisionSweepMixin:
                     full_desktop_description = "No fullscreen desktop context available."
                     unique_things = "None detected."
                     has_full = full_img_path.exists()
+                    # Optional external MCP context (for reference only) for the vision pass.
+                    mcp_ctx_vision = mcp_enrich(
+                        "local_vision", f"{meta.get('app_name', '')} {meta.get('window_title', '')}".strip()
+                    )
+                    mcp_block_vision = (
+                        f"Supplementary external MCP context (for reference only):\n{mcp_ctx_vision}\n\n"
+                        if mcp_ctx_vision
+                        else ""
+                    )
                     try:
-                        self.log_step(rec_id, "Vision pass 1/2: Analyzing focused window, desktop context & unique artifacts...")
+                        self.log_step(
+                            rec_id, "Vision pass 1/2: Analyzing focused window, desktop context & unique artifacts..."
+                        )
                         images_v = [str(img_path)]
                         if has_full:
                             images_v.append(str(full_img_path))
@@ -145,7 +189,8 @@ class VisionSweepMixin:
                             + "Be highly objective, granular, and precise. Specify filenames, code functions, browser URLs, "
                             "searched keywords, active spreadsheet columns, or chat messages. Do not add conversational filler "
                             "or generic assumptions.\n\n"
-                            "You must respond in valid JSON format matching this schema:\n"
+                            + mcp_block_vision
+                            + "You must respond in valid JSON format matching this schema:\n"
                             "{\n"
                             '  "active_window_description": "what the focused foreground window/document/workspace shows",\n'
                             '  "full_desktop_description": "peripheral/background windows, sidebars or layout OUTSIDE the focus (keep brief if none)",\n'
@@ -160,8 +205,12 @@ class VisionSweepMixin:
                             keep_alive=stage_keep_alive,
                         )
                         parsed_v = json.loads(response_v.get("message", {}).get("content", "") or "{}")
-                        active_window_description = (parsed_v.get("active_window_description") or "").strip() or active_window_description
-                        full_desktop_description = (parsed_v.get("full_desktop_description") or "").strip() or full_desktop_description
+                        active_window_description = (
+                            parsed_v.get("active_window_description") or ""
+                        ).strip() or active_window_description
+                        full_desktop_description = (
+                            parsed_v.get("full_desktop_description") or ""
+                        ).strip() or full_desktop_description
                         unique_things = (parsed_v.get("unique_things") or "").strip() or unique_things
                         self.log_step(rec_id, f"Vision pass complete: {active_window_description[:120]}...")
                     except Exception as ev:
@@ -177,15 +226,25 @@ class VisionSweepMixin:
                     tags = []
                     description = "No description generated."
                     try:
-                        self.log_step(rec_id, "Vision pass 2/2: Classifying project, generating tags & synthesizing description...")
+                        self.log_step(
+                            rec_id,
+                            "Vision pass 2/2: Classifying project, generating tags & synthesizing description...",
+                        )
 
                         # Query historically similar snapshots using metadata overlap instead of vector embeddings to prevent model swapping
                         similar_snapshots = db.get_similar_labeled_snapshots_by_metadata(
-                            app_name=meta.get("app_name"),
-                            window_title=meta.get("window_title"),
-                            limit=5
+                            app_name=meta.get("app_name"), window_title=meta.get("window_title"), limit=5
                         )
                         similar_snapshots_str = json.dumps(similar_snapshots, ensure_ascii=False)
+
+                        # Optional external MCP context (GitHub/Jira/etc.) for classification.
+                        mcp_query_syn = (
+                            f"{meta.get('app_name', '')} {meta.get('window_title', '')} {truncated_ocr[:200]}".strip()
+                        )
+                        mcp_ctx_syn = mcp_enrich("local_synthesis", mcp_query_syn)
+                        if mcp_ctx_syn:
+                            self.log_step(rec_id, "Injected external MCP context into local synthesis prompt.")
+                        mcp_block_syn = f"\n- External MCP Tool Context:\n{mcp_ctx_syn}" if mcp_ctx_syn else ""
 
                         prompt_syn = f"""
 You are indexing a desktop snapshot. Use only the evidence below.
@@ -196,7 +255,7 @@ You are indexing a desktop snapshot. Use only the evidence below.
 - ActivityWatch Bucket State: {aw_context_str}
 - Neighboring Snapshots: {neighbor_context_str}
 - Historically Similar Snapshots: {similar_snapshots_str}
-- App project statistics: {app_freq_str}
+- App project statistics: {app_freq_str}{mcp_block_syn}
 
 Project Reference Catalog:
 {projects_str}
@@ -226,7 +285,10 @@ You must respond in valid JSON format matching this exact schema:
                         syn_tags = parsed_syn.get("tags", [])
                         tags = syn_tags if isinstance(syn_tags, list) else []
                         description = (parsed_syn.get("description") or "").strip() or description
-                        self.log_step(rec_id, f"Synthesis complete: Project='{project_number}', Tags={tags}, Desc={description[:120]}...")
+                        self.log_step(
+                            rec_id,
+                            f"Synthesis complete: Project='{project_number}', Tags={tags}, Desc={description[:120]}...",
+                        )
                     except Exception as esyn:
                         self.log_step(rec_id, f"Warning: Synthesis pass failed: {esyn}")
 

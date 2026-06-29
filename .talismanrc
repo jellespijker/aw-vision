@@ -12,7 +12,7 @@ fileignoreconfig:
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
-  checksum: 97c8225a5fdae40d95661df294ca0d5526c3be0b1ed7268806fbf37c936ccbf2
+  checksum: 3160da43f5b71659e7d976997f77bc3d8e51cde519a7f3fd69d7fb8952d6efac
 - filename: frontend/src/App.tsx
   checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
 - filename: frontend/src/components/ProjectsTab.tsx
@@ -34,9 +34,19 @@ fileignoreconfig:
 - filename: aw_vision/gemini.py
   checksum: e1fd009f0d8bcc0b4d3849eeb9a964b02be0e50c92d58498520589a94cf2d04d
 - filename: frontend/src/components/SettingsTab.tsx
-  checksum: 3427e204ee796761f2061675166c3e70e1d3e1101ca0d73a3639e9dfe1702cfe
+  checksum: 3b551f2009997bef9de2f1435a87968b1b4948a231cf6f3125971de4f21fb400
 - filename: aw_vision/watcher.py
   checksum: 70670ca0612617d83a43b4bd6af0f67b4b72f1b28cdf4320ec962576e049f7b6
 - filename: frontend/src/components/PipelineTab.tsx
   checksum: 97a1209450bf841ff9a916c2b9d6e94aea7a1b8a18c48b743d831c6fcbb477d4
+- filename: aw_vision/mcp_manager.py
+  checksum: 8c4692a058bf63dbdc5aae28650dec28d692b26b6789a1822d4f02b43629a92a
+- filename: frontend/src/components/McpSettings.tsx
+  checksum: 8a0dfac4b664677b2ccbcdf348c49b44fd7ce33fd8ad4aba4743341774c5c2b2
+- filename: aw_vision/gemini/vision.py
+  checksum: 4d76e009954759e94e99cd6c2d1892174369700e7f40a7bafd76d60c2b867db3
+- filename: aw_vision/processor/vision_sweep.py
+  checksum: d6075f2b3bfbbbbef4db8187f215c0b65cbfeb2eed2bf2e6d4523646bc790274
+- filename: frontend/src/components/Sidebar.tsx
+  checksum: b0a00955e388d7ce22c863b30ebed849de348e1b5d968e998ec3c3319d55bbbe
 version: ""

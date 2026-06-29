@@ -1,0 +1,15 @@
+[Unit]
+Description=ActivityWatch Vision React Frontend (Vite)
+PartOf=graphical-session.target
+After=aw-vision-backend.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/activitywatch/aw-vision/frontend
+Environment="PATH=%h/.nvm/versions/node/v24.4.1/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=%h/.nvm/versions/node/v24.4.1/bin/npm run dev
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
