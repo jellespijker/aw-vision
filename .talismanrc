@@ -34,7 +34,7 @@ fileignoreconfig:
 - filename: aw_vision/gemini.py
   checksum: e1fd009f0d8bcc0b4d3849eeb9a964b02be0e50c92d58498520589a94cf2d04d
 - filename: frontend/src/components/SettingsTab.tsx
-  checksum: 1706ef183538280305dd522ba10f28946607599f845bc95707a74db6527c935a
+  checksum: 3b551f2009997bef9de2f1435a87968b1b4948a231cf6f3125971de4f21fb400
 - filename: aw_vision/watcher.py
   checksum: 70670ca0612617d83a43b4bd6af0f67b4b72f1b28cdf4320ec962576e049f7b6
 - filename: frontend/src/components/PipelineTab.tsx
@@ -47,4 +47,6 @@ fileignoreconfig:
   checksum: 4d76e009954759e94e99cd6c2d1892174369700e7f40a7bafd76d60c2b867db3
 - filename: aw_vision/processor/vision_sweep.py
   checksum: d6075f2b3bfbbbbef4db8187f215c0b65cbfeb2eed2bf2e6d4523646bc790274
+- filename: frontend/src/components/Sidebar.tsx
+  checksum: b0a00955e388d7ce22c863b30ebed849de348e1b5d968e998ec3c3319d55bbbe
 version: ""

@@ -3,6 +3,7 @@ import axios from 'axios'
 import {
   Settings,
   Key,
+  Bot,
   Cpu,
   Server,
   Activity,
@@ -16,11 +17,9 @@ import {
   RefreshCw,
   Sparkles,
   ShieldAlert,
+  Plug,
   Camera,
-  Clock,
-  Trash2,
-  History,
-  Plug
+  Clock
 } from 'lucide-react'
 import { McpSettings } from './McpSettings'
 
@@ -70,7 +69,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
   const [loading, setLoading] = useState<boolean>(true)
   const [saving, setSaving] = useState<boolean>(false)
   const [showKey, setShowKey] = useState<boolean>(false)
-  const [subTab, setSubTab] = useState<'engine' | 'mcp'>('engine')
+
+  // Active settings sub-section (tab within the Settings page)
+  type SettingsSection = 'provider' | 'models' | 'agent' | 'capture' | 'database' | 'mcp'
+  const [section, setSection] = useState<SettingsSection>('provider')
 
   // API testing states
   const [testingKey, setTestingKey] = useState<boolean>(false)
@@ -243,7 +245,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
   const geminiEmbeddings = ['gemini-embedding-002', 'gemini-embeddings-002', 'text-embedding-004']
 
   // Merge custom models with fetched models, ensuring no duplicates
-  const getLlmOptions = (excludeGemma = false) => {
+  const getLlmOptions = () => {
     const customModels = [
       { id: 'gemma-4-26b-a4b-it', display_name: 'Gemma 4 26B A4B IT (Recommended)' },
       { id: 'gemma-4-31b-it', display_name: 'Gemma 4 31B IT' },
@@ -252,7 +254,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
       { id: 'gemini-1.5-pro', display_name: 'Gemini 1.5 Pro' }
     ]
 
-    let combined = [...customModels]
+    const combined = [...customModels]
     geminiModels.forEach(m => {
       if (!combined.some(c => c.id === m.id)) {
         combined.push({
@@ -261,73 +263,70 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
         })
       }
     })
-
-    if (excludeGemma) {
-      combined = combined.filter(m => !m.id.toLowerCase().includes('gemma'))
-    }
     return combined
   }
 
+  const sections: { id: SettingsSection; label: string; icon: React.ElementType }[] = [
+    { id: 'provider', label: 'Provider', icon: Cpu },
+    { id: 'models', label: 'Pipeline Models', icon: isGeminiActive ? Sparkles : Server },
+    { id: 'agent', label: 'Memory Agent', icon: Bot },
+    { id: 'capture', label: 'Capture', icon: Camera },
+    { id: 'database', label: 'Database', icon: Database },
+    { id: 'mcp', label: 'MCP Integrations', icon: Plug }
+  ]
+
   return (
     <div className="font-sans space-y-6">
-      {/* Header section */}
-      <div className="border-b border-surface-container-high pb-5">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[11px] font-semibold text-primary uppercase tracking-wider bg-accent-surface border border-primary/10 px-2.5 py-0.5 rounded font-mono select-none">
-                System Configurations
-              </span>
-              {isGeminiActive ? (
-                <span className="text-[11px] font-semibold text-success-green uppercase tracking-wider bg-success-green/10 border border-success-green/20 px-2 py-0.5 rounded font-mono flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> Gemini Active
-                </span>
-              ) : (
-                <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider bg-surface-container-low border border-surface-container-high px-2 py-0.5 rounded font-mono flex items-center gap-1">
-                  <Server className="w-3 h-3" /> Ollama Local Only
-                </span>
-              )}
-            </div>
-            <h2 className="text-2xl md:text-3xl font-bold text-neutral-dark tracking-tight">
-              System Settings
-            </h2>
-            <p className="text-text-secondary text-body-md mt-1.5 max-w-2xl leading-relaxed">
-              Configure AI providers and models, screen-capture cadence, and external MCP integrations. Sensitive credentials are hardware-encrypted locally.
-            </p>
-          </div>
+      {/* Page header */}
+      <div>
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="text-[11px] font-semibold text-primary uppercase tracking-wider bg-accent-surface border border-primary/10 px-2.5 py-0.5 rounded font-mono select-none">
+            System Configurations
+          </span>
+          {isGeminiActive ? (
+            <span className="text-[11px] font-semibold text-success-green uppercase tracking-wider bg-success-green/10 border border-success-green/20 px-2 py-0.5 rounded font-mono flex items-center gap-1">
+              <Sparkles className="w-3 h-3" /> Gemini Active
+            </span>
+          ) : (
+            <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider bg-surface-container-low border border-surface-container-high px-2 py-0.5 rounded font-mono flex items-center gap-1">
+              <Server className="w-3 h-3" /> Ollama Local Only
+            </span>
+          )}
         </div>
+        <h2 className="text-2xl md:text-3xl font-bold text-neutral-dark tracking-tight">Settings</h2>
+        <p className="text-text-secondary text-body-md mt-1.5 max-w-2xl leading-relaxed">
+          Transition between local-only Ollama models and Google Gemini cloud services. Sensitive API keys are hardware-encrypted locally.
+        </p>
       </div>
 
-      {/* Settings sub-tab navigation */}
-      <div className="flex border-b border-surface-container-high gap-2 overflow-x-auto select-none">
-        <button
-          type="button"
-          onClick={() => setSubTab('engine')}
-          className={`h-10 px-5 text-action-md font-medium rounded-t transition-all border-b-2 flex items-center gap-2 shrink-0 cursor-pointer ${
-            subTab === 'engine'
-              ? 'border-primary text-primary bg-surface-container-lowest'
-              : 'border-transparent text-text-secondary hover:text-neutral-dark hover:bg-surface-container-low'
-          }`}
-        >
-          <Cpu className="w-4 h-4" /> AI &amp; Models
-        </button>
-        <button
-          type="button"
-          onClick={() => setSubTab('mcp')}
-          className={`h-10 px-5 text-action-md font-medium rounded-t transition-all border-b-2 flex items-center gap-2 shrink-0 cursor-pointer ${
-            subTab === 'mcp'
-              ? 'border-primary text-primary bg-surface-container-lowest'
-              : 'border-transparent text-text-secondary hover:text-neutral-dark hover:bg-surface-container-low'
-          }`}
-        >
-          <Plug className="w-4 h-4" /> MCP Integrations
-        </button>
+      {/* Horizontal sub-tab navigation */}
+      <div className="flex gap-1 border-b border-surface-container-high overflow-x-auto select-none">
+        {sections.map((s) => {
+          const Icon = s.icon
+          const isActive = section === s.id
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setSection(s.id)}
+              className={`h-10 px-4 text-action-md font-medium font-messina border-b-2 -mb-px flex items-center gap-2 shrink-0 transition-colors cursor-pointer ${
+                isActive
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-text-secondary hover:text-neutral-dark'
+              }`}
+            >
+              <Icon className="w-4 h-4" /> {s.label}
+            </button>
+          )
+        })}
       </div>
 
-      {subTab === 'engine' && (
-      <form onSubmit={saveSettings} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: API & Provider Configuration (7 columns) */}
-        <div className="lg:col-span-7 space-y-6">
+      {section === 'mcp' ? (
+        <McpSettings showNotification={showNotification} />
+      ) : (
+      <form onSubmit={saveSettings} className="space-y-6">
+        {/* SECTION: Provider */}
+        <div className={`max-w-3xl space-y-6 ${section === 'provider' ? '' : 'hidden'}`}>
           {/* Provider Selection Card */}
           <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-5">
             <h3 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2 border-b border-surface-container-high pb-3">
@@ -388,34 +387,6 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
                   API Key Required
                 </span>
               </label>
-            </div>
-
-            <div className="border-t border-surface-container-high pt-5 mt-5 space-y-4">
-              <div className="space-y-1.5 max-w-md">
-                <label htmlFor="ocrProviderSelect" className="text-body-sm font-semibold text-text-secondary">
-                  OCR Provider
-                </label>
-                <select
-                  id="ocrProviderSelect"
-                  name="ocrProviderSelect"
-                  value={settings.ocr_provider || 'ollama'}
-                  onChange={(e) => handleSettingChange('ocr_provider', e.target.value)}
-                  className="w-full bg-surface-container-low border border-surface-container-high h-11 px-3 rounded text-body-md text-neutral-dark outline-none focus:border-primary transition-colors cursor-pointer"
-                >
-                  <option value="ollama">Ollama (Local GLM-OCR)</option>
-                  <option value="gemini">Gemini (Cloud OCR)</option>
-                </select>
-                <p className="text-[11px] text-text-secondary">
-                  Select where screenshot text extraction takes place.
-                </p>
-              </div>
-
-              <div className="p-4 bg-surface-container-low rounded border border-surface-container-high text-body-sm text-text-secondary flex items-start gap-2 leading-relaxed">
-                <CheckCircle2 className="w-4.5 h-4.5 text-success-green shrink-0 mt-0.5" />
-                <div>
-                  <strong>Pipeline Optimization:</strong> If both main provider and OCR provider are set to Gemini, local OCR is bypassed, and Phase 2 combines both OCR and Vision extraction in a single multimodal request to save API quota and time.
-                </div>
-              </div>
             </div>
           </div>
 
@@ -534,6 +505,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
             </div>
           </div>
 
+        </div>
+
+        {/* SECTION: Pipeline Models */}
+        <div className={`max-w-3xl space-y-6 ${section === 'models' ? '' : 'hidden'}`}>
           {/* Model Specific Settings */}
           {isGeminiActive ? (
             /* Gemini cloud model config card */
@@ -604,6 +579,32 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
                   <span className="text-[11px] text-text-secondary">
                     Recommended: <strong>1,048,576</strong> characters.
                   </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor="ocrProviderSelect" className="text-body-sm font-semibold text-text-secondary">
+                    OCR Provider
+                  </label>
+                  <select
+                    id="ocrProviderSelect"
+                    name="ocrProviderSelect"
+                    value={settings.ocr_provider || 'ollama'}
+                    onChange={(e) => handleSettingChange('ocr_provider', e.target.value)}
+                    className="w-full bg-surface-container-low border border-surface-container-high h-11 px-3 rounded text-body-md text-neutral-dark outline-none focus:border-primary transition-colors cursor-pointer"
+                  >
+                    <option value="ollama">Ollama (Local GLM-OCR)</option>
+                    <option value="gemini">Gemini (Cloud OCR)</option>
+                  </select>
+                  <p className="text-[11px] text-text-secondary">
+                    Select where screenshot text extraction takes place.
+                  </p>
+                </div>
+
+                <div className="p-4 bg-surface-container-low rounded border border-surface-container-high text-body-sm text-text-secondary flex items-start gap-2 leading-relaxed md:col-span-2">
+                  <CheckCircle2 className="w-4.5 h-4.5 text-success-green shrink-0 mt-0.5" />
+                  <div>
+                    <strong>Pipeline Optimization:</strong> If both main provider and OCR provider are set to Gemini, local OCR is bypassed, and Phase 2 combines both OCR and Vision extraction in a single multimodal request to save API quota and time.
+                  </div>
                 </div>
               </div>
             </div>
@@ -694,8 +695,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
           )}
         </div>
 
-        {/* Right Column: Memory Agent & DB Maintenance (5 columns) */}
-        <div className="lg:col-span-5 space-y-6">
+        {/* SECTION: Memory Agent */}
+        <div className={`max-w-3xl space-y-6 ${section === 'agent' ? '' : 'hidden'}`}>
           {/* Interactive Memory Agent Config */}
           <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-5">
             <h3 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2 border-b border-surface-container-high pb-3">
@@ -787,126 +788,80 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
             </div>
           </div>
 
-          {/* Capture Loop & Retention Settings */}
+        </div>
+
+        {/* SECTION: Capture */}
+        <div className={`max-w-3xl space-y-6 ${section === 'capture' ? '' : 'hidden'}`}>
           <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-5">
             <h3 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2 border-b border-surface-container-high pb-3">
-              <Camera className="w-5 h-5 text-primary" /> Capture &amp; Retention Settings
+              <Camera className="w-5 h-5 text-primary" /> Capture &amp; Retention
             </h3>
-
-            <div className="space-y-4">
-              {/* Screenshot Capture Interval */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <label htmlFor="screenshotIntervalInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-primary" /> Screenshot Capture Interval
-                  </label>
-                  <span className="text-technical-sm font-mono text-primary font-bold bg-accent-surface border border-primary/10 px-2 py-0.5 rounded">
-                    {settings.screenshot_interval_seconds} seconds
-                  </span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <input
-                    id="screenshotIntervalInputRange"
-                    type="range"
-                    min="10"
-                    max="600"
-                    step="5"
-                    value={settings.screenshot_interval_seconds || 60}
-                    onChange={(e) => handleSettingChange('screenshot_interval_seconds', parseInt(e.target.value))}
-                    className="flex-1 accent-primary h-2 bg-surface-container rounded-lg appearance-none cursor-pointer"
-                  />
-                  <input
-                    id="screenshotIntervalInput"
-                    name="screenshotIntervalInput"
-                    type="number"
-                    min="10"
-                    max="3600"
-                    value={settings.screenshot_interval_seconds || 60}
-                    onChange={(e) => handleSettingChange('screenshot_interval_seconds', parseInt(e.target.value) || 0)}
-                    className="w-20 text-center bg-surface-container-low border border-surface-container-high h-9 px-2 rounded text-body-sm text-neutral-dark font-mono outline-none focus:border-primary transition-colors"
-                  />
-                </div>
-                <p className="text-technical-sm text-text-secondary leading-normal">
-                  Frequency of capturing window/desktop states. Re-evaluated in real-time.
-                </p>
+                <label htmlFor="screenshotIntervalInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                  <Camera className="w-3.5 h-3.5" /> Screenshot Interval (seconds)
+                </label>
+                <input
+                  id="screenshotIntervalInput"
+                  type="number"
+                  min="5"
+                  value={settings.screenshot_interval_seconds ?? 60}
+                  onChange={(e) => handleSettingChange('screenshot_interval_seconds', parseInt(e.target.value) || 0)}
+                  className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark outline-none focus:border-primary font-mono transition-colors"
+                />
+                <p className="text-[11px] text-text-secondary">How often the watcher captures the active screen.</p>
               </div>
 
-              {/* CPU-Aware Resource Check Interval */}
               <div className="space-y-1.5">
                 <label htmlFor="checkIntervalInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
-                  <Activity className="w-4 h-4 text-primary" /> Resource Status Check Frequency
+                  <Clock className="w-3.5 h-3.5" /> Processing Check Interval (seconds)
                 </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    id="checkIntervalInput"
-                    name="checkIntervalInput"
-                    type="number"
-                    min="1"
-                    max="300"
-                    value={settings.check_interval_seconds || 10}
-                    onChange={(e) => handleSettingChange('check_interval_seconds', parseInt(e.target.value) || 0)}
-                    className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark font-mono outline-none focus:border-primary transition-colors"
-                  />
-                  <span className="text-body-sm text-text-secondary font-medium shrink-0">seconds</span>
-                </div>
-                <p className="text-technical-sm text-text-secondary leading-normal">
-                  Cycle duration for evaluating resource status (CPU thresholds) in moments of low activity.
-                </p>
+                <input
+                  id="checkIntervalInput"
+                  type="number"
+                  min="1"
+                  value={settings.check_interval_seconds ?? 10}
+                  onChange={(e) => handleSettingChange('check_interval_seconds', parseInt(e.target.value) || 0)}
+                  className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark outline-none focus:border-primary font-mono transition-colors"
+                />
+                <p className="text-[11px] text-text-secondary">How often the processor daemon scans the pending queue.</p>
               </div>
 
-              {/* Retention Policy Row */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Screenshot Max Lifetime */}
-                <div className="space-y-1.5">
-                  <label htmlFor="maxScreenshotLifetimeInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
-                    <Trash2 className="w-4 h-4 text-primary" /> Image File Max Lifetime
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      id="maxScreenshotLifetimeInput"
-                      name="maxScreenshotLifetimeInput"
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={settings.max_screenshot_lifetime_days || 14}
-                      onChange={(e) => handleSettingChange('max_screenshot_lifetime_days', parseInt(e.target.value) || 0)}
-                      className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark font-mono outline-none focus:border-primary transition-colors"
-                    />
-                    <span className="text-body-sm text-text-secondary font-medium shrink-0">days</span>
-                  </div>
-                </div>
-
-                {/* Cleanup Scan Frequency */}
-                <div className="space-y-1.5">
-                  <label htmlFor="cleanupIntervalInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
-                    <History className="w-4 h-4 text-primary" /> Purge Cycle Interval
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      id="cleanupIntervalInput"
-                      name="cleanupIntervalInput"
-                      type="number"
-                      min="1"
-                      max="168"
-                      value={settings.cleanup_interval_hours || 1}
-                      onChange={(e) => handleSettingChange('cleanup_interval_hours', parseInt(e.target.value) || 0)}
-                      className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark font-mono outline-none focus:border-primary transition-colors"
-                    />
-                    <span className="text-body-sm text-text-secondary font-medium shrink-0">hours</span>
-                  </div>
-                </div>
+              <div className="space-y-1.5">
+                <label htmlFor="lifetimeInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5" /> Screenshot Retention (days)
+                </label>
+                <input
+                  id="lifetimeInput"
+                  type="number"
+                  min="1"
+                  value={settings.max_screenshot_lifetime_days ?? 14}
+                  onChange={(e) => handleSettingChange('max_screenshot_lifetime_days', parseInt(e.target.value) || 0)}
+                  className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark outline-none focus:border-primary font-mono transition-colors"
+                />
+                <p className="text-[11px] text-text-secondary">Raw screenshot files are purged after this many days.</p>
               </div>
 
-              {/* Info alert banner */}
-              <div className="p-4 bg-surface-container-low rounded border border-surface-container-high text-body-sm text-text-secondary flex items-start gap-2.5 leading-relaxed">
-                <CheckCircle2 className="w-4.5 h-4.5 text-success-green shrink-0 mt-0.5" />
-                <div>
-                  <strong>Retention Policy:</strong> Raw screenshot image files older than configured days are deleted permanently, but metadata (OCR texts, description contexts, coordinates) is kept forever so your history remains completely searchable.
-                </div>
+              <div className="space-y-1.5">
+                <label htmlFor="cleanupInput" className="text-body-sm font-semibold text-text-secondary flex items-center gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5" /> Cleanup Interval (hours)
+                </label>
+                <input
+                  id="cleanupInput"
+                  type="number"
+                  min="1"
+                  value={settings.cleanup_interval_hours ?? 1}
+                  onChange={(e) => handleSettingChange('cleanup_interval_hours', parseInt(e.target.value) || 0)}
+                  className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark outline-none focus:border-primary font-mono transition-colors"
+                />
+                <p className="text-[11px] text-text-secondary">How often the retention cleanup sweep runs.</p>
               </div>
             </div>
           </div>
+        </div>
 
+        {/* SECTION: Database */}
+        <div className={`max-w-3xl space-y-6 ${section === 'database' ? '' : 'hidden'}`}>
           {/* Database Re-embedding Progress and Controls */}
           <div className="bg-surface-container-lowest border border-surface-container-high p-6 rounded-lg space-y-4">
             <h3 className="font-bold text-headline-sm text-neutral-dark flex items-center gap-2 border-b border-surface-container-high pb-3">
@@ -990,40 +945,38 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
             )}
           </div>
 
-          {/* Action buttons footer */}
-          <div className="flex items-center gap-4 justify-end pt-2">
-            <button
-              type="button"
-              onClick={fetchSettings}
-              disabled={saving}
-              className="bg-surface-container-low hover:bg-surface-container border border-surface-container-high text-neutral-dark text-action-md font-bold py-3 px-5 rounded h-11 transition-all cursor-pointer"
-            >
-              Reset Changes
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="bg-primary hover:opacity-90 border border-primary text-on-primary text-action-md font-bold py-3 px-6 rounded h-11 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-55 shadow-none"
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="w-4.5 h-4.5 animate-spin" />
-                  Saving Configuration...
-                </>
-              ) : (
-                <>
-                  <Settings className="w-4.5 h-4.5" />
-                  Save configurations
-                </>
-              )}
-            </button>
-          </div>
+        </div>
+
+        {/* Shared action buttons footer */}
+        <div className="flex items-center gap-4 justify-end pt-5 border-t border-surface-container-high">
+          <button
+            type="button"
+            onClick={fetchSettings}
+            disabled={saving}
+            className="bg-surface-container-low hover:bg-surface-container border border-surface-container-high text-neutral-dark text-action-md font-bold py-3 px-5 rounded h-11 transition-all cursor-pointer"
+          >
+            Reset Changes
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="bg-primary hover:opacity-90 border border-primary text-on-primary text-action-md font-bold py-3 px-6 rounded h-11 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-55 shadow-none"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="w-4.5 h-4.5 animate-spin" />
+                Saving Configuration...
+              </>
+            ) : (
+              <>
+                <Settings className="w-4.5 h-4.5" />
+                Save configurations
+              </>
+            )}
+          </button>
         </div>
       </form>
       )}
-
-      {/* MCP (Model Context Protocol) integrations sub-tab */}
-      {subTab === 'mcp' && <McpSettings showNotification={showNotification} />}
     </div>
   )
 }
