@@ -319,11 +319,144 @@ def tool_get_recent_screenshots(limit: Union[int, str] = 10) -> str:
         return f"Error retrieving recent screenshots: {e}"
 
 
+def tool_get_current_datetime(arg: str = None) -> str:
+    """Return the current local date, time, weekday, ISO timestamp and epoch seconds.
+
+    Useful when the agent needs to ground itself before reasoning about relative dates
+    ('yesterday', 'last week') or to directly answer 'what time/day is it'. Takes no arguments.
+    """
+    now = datetime.now()
+    return (
+        f"Current local datetime:\n"
+        f"- Date: {now:%Y-%m-%d} ({now:%A})\n"
+        f"- Time: {now:%H:%M:%S}\n"
+        f"- ISO: {now.isoformat(timespec='seconds')}\n"
+        f"- Epoch seconds: {now.timestamp():.0f}"
+    )
+
+
+def _parse_timeframe_arg(arg: str) -> dict:
+    """Normalise the agent's single-string argument into a params dict.
+
+    Accepts either a plain timeframe phrase ('yesterday') or a compact JSON object so the
+    agent can pick optional filters, e.g.
+    {"timeframe": "yesterday", "app": "Firefox", "project": "PRJ-2026-042", "query": "lint"}.
+    """
+    raw = (arg or "").strip()
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return {k: (str(v).strip() if v is not None else None) for k, v in parsed.items()}
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return {"timeframe": raw}
+
+
+def tool_get_activity_for_timeframe(arg: str) -> str:
+    """Retrieve desktop activity within a specific date/time window, with optional filters.
+
+    The argument is flexible so the agent can pick what it needs. Pass either:
+      - a plain timeframe phrase: 'yesterday', 'this morning', 'last week', 'last 3 days',
+        a weekday name, an ISO date (2026-06-28), or a range (2026-06-01 to 2026-06-07); or
+      - a compact JSON object to narrow results, e.g.
+        {"timeframe": "yesterday", "app": "Firefox", "project": "PRJ-2026-042", "query": "lint"}.
+    The timeframe is resolved to a concrete epoch range in Python so date filtering is exact.
+    """
+    from aw_vision.timeframe import parse_timeframe
+
+    params = _parse_timeframe_arg(arg)
+    timeframe = params.get("timeframe") or params.get("when") or ""
+    app_filter = (params.get("app") or "").lower()
+    project_filter = (params.get("project") or "").lower()
+    query_filter = (params.get("query") or params.get("keyword") or "").lower()
+
+    parsed = parse_timeframe(timeframe)
+    if not parsed:
+        return (
+            f"Could not interpret the timeframe '{timeframe}'. Try phrases like 'yesterday', "
+            "'this morning', 'last week', 'last 3 days', or an ISO date like '2026-06-28'."
+        )
+    start_ts, end_ts, label = parsed
+
+    try:
+        where = f"timestamp >= {start_ts} AND timestamp <= {end_ts}"
+        records = db.query_metadata(where, limit=100000)
+    except Exception as e:
+        return f"Error querying activity for {label}: {e}"
+
+    # Keep only active (non-AFK) records and order chronologically.
+    active = [r for r in records if not r.get("is_afk")]
+
+    # Apply optional generic filters the agent may have supplied.
+    applied = []
+    if app_filter:
+        active = [r for r in active if app_filter in (r.get("app_name") or "").lower()]
+        applied.append(f"app~'{app_filter}'")
+    if project_filter:
+        active = [r for r in active if project_filter in (r.get("project_number") or "").lower()]
+        applied.append(f"project~'{project_filter}'")
+    if query_filter:
+        def _matches(r):
+            blob = " ".join([
+                r.get("description") or "", r.get("ocr_text") or "",
+                r.get("window_title") or "", " ".join(r.get("tags") or []),
+            ]).lower()
+            return query_filter in blob
+        active = [r for r in active if _matches(r)]
+        applied.append(f"query~'{query_filter}'")
+
+    active.sort(key=lambda x: x.get("timestamp", 0))
+    filter_note = f" [filters: {', '.join(applied)}]" if applied else ""
+    if not active:
+        return f"No active desktop activity recorded for {label}{filter_note}."
+
+    interval_hours = config.screenshot_interval / 3600.0
+    total_hours = len(active) * interval_hours
+
+    # Aggregate time per app and per project so the agent gets a grounded breakdown.
+    by_app: dict = {}
+    by_project: dict = {}
+    for r in active:
+        app = r.get("app_name") or "Unknown"
+        by_app[app] = by_app.get(app, 0.0) + interval_hours
+        p_num = r.get("project_number") or "Unclassified"
+        by_project[p_num] = by_project.get(p_num, 0.0) + interval_hours
+
+    output = [
+        f"=== Activity for {label}{filter_note} ===",
+        f"Window: {datetime.fromtimestamp(start_ts):%Y-%m-%d %H:%M} to {datetime.fromtimestamp(end_ts):%Y-%m-%d %H:%M}",
+        f"Active time (approx): {total_hours:.2f} hours across {len(active)} snapshots.",
+        "",
+        "Time per project:",
+    ]
+    for p_num, hrs in sorted(by_project.items(), key=lambda kv: kv[1], reverse=True):
+        output.append(f"  - {p_num}: {hrs:.2f}h")
+    output.append("Time per application:")
+    for app, hrs in sorted(by_app.items(), key=lambda kv: kv[1], reverse=True)[:12]:
+        output.append(f"  - {app}: {hrs:.2f}h")
+
+    output.append("")
+    output.append("Chronological timeline:")
+    for r in active:
+        dt = datetime.fromtimestamp(r.get("timestamp", 0)).strftime("%H:%M")
+        ocr_text = caveman_compress_text(r.get("ocr_text", "N/A") or "N/A")
+        if len(ocr_text) > 120:
+            ocr_text = ocr_text[:120].strip() + "..."
+        output.append(
+            f"- [{dt}] {r.get('app_name')} | {r.get('window_title')}: {r.get('description')} "
+            f"(Proj: {r.get('project_number')})"
+        )
+    return "\n".join(output)
+
+
 # Export a tool mapping
 TOOLS = {
     "search_screenshots_semantic": tool_search_screenshots_semantic,
     "get_similar_labeled_snapshots": tool_get_similar_labeled_snapshots,
     "get_recent_screenshots": tool_get_recent_screenshots,
+    "get_activity_for_timeframe": tool_get_activity_for_timeframe,
+    "get_current_datetime": tool_get_current_datetime,
     "get_active_projects": tool_get_active_projects,
     "aggregate_project_hours": tool_aggregate_project_hours,
     "query_github": tool_query_github,
@@ -464,7 +597,8 @@ def run_agent_node(state: AgentState) -> AgentState:
     # Render messages into a text prompt for the LLM
     prompt_lines = [
         "You are an advanced agentic productivity assistant integrated with ActivityWatch.",
-        f"The current local date and time is: {current_time_str}.",
+        f"For rough context only, this session started around {current_time_str}; this clock may be stale, "
+        "so when the user asks the exact current time or date you MUST call get_current_datetime rather than quoting this line.",
         "You have access to the user's desktop history via screenshot descriptions, tags, active window titles,",
         "as well as local work hours and external integrations (GitHub, Jira).",
         "Use the tools provided to answer the user's questions.",
@@ -472,6 +606,8 @@ def run_agent_node(state: AgentState) -> AgentState:
         "- search_screenshots_semantic(query): Search vector db of screenshots using semantic search.",
         "- get_similar_labeled_snapshots(query): Search vector db for similar labeled snapshots, giving 5x weight to human-verified project labels and matching tags/applications.",
         "- get_recent_screenshots(limit): Retrieve the most recent desktop screenshots, ordered by timestamp descending.",
+        "- get_activity_for_timeframe(arg): Retrieve activity inside a specific date/time window. The argument is flexible — pass either a plain phrase ('yesterday', 'this morning', 'last week', 'last 3 days', a weekday, an ISO date '2026-06-28', or a range '2026-06-01 to 2026-06-07'), OR a compact JSON object to also filter, e.g. {\"timeframe\": \"yesterday\", \"app\": \"Firefox\", \"project\": \"PRJ-2026-042\", \"query\": \"lint\"}. Date math is computed exactly server-side and returns a per-project/per-app breakdown plus a timeline.",
+        "- get_current_datetime(): Return the current local date, time and weekday. Use it to ground yourself before reasoning about relative dates, or to answer 'what time/day is it'. Pass None as the argument.",
         "- get_active_projects(): List configured projects, descriptions, and work guidelines.",
         "- aggregate_project_hours(): Return total active hours spent on each project number.",
         "- query_github(query): Find commits, PRs, or issues on user's GitHub repositories.",
@@ -498,7 +634,10 @@ def run_agent_node(state: AgentState) -> AgentState:
         "such as browsing website pages, looking for sneakers, reading files, or coding topics.",
         "CRITICAL: Always perform 'search_screenshots_semantic' first if the user asks about a specific person (e.g., 'Who is Sergii?', 'What did I discuss with Arjen?'),",
         "specific projects, files, websites, or chat conversations. Do not assume you know them from your pre-trained weights; always search your local computer memory first.",
-        "CRITICAL: Always use 'get_recent_screenshots' if the user asks what they worked on recently (e.g., in the past hour, today, this morning, or wants a timeline of recent activity).",
+        "CRITICAL: If the user's question is scoped to a date or time window (e.g. 'yesterday', 'today', 'this morning', 'last week', 'last 3 days', 'on Monday', or a specific date), you MUST use 'get_activity_for_timeframe' and pass the user's exact time phrase as the argument. Do NOT use 'get_recent_screenshots' for date-scoped questions — it ignores dates and will return the wrong period.",
+        "CRITICAL: Use 'get_recent_screenshots' ONLY for open-ended 'what am I doing right now / most recently' questions with no specific date or time window.",
+        "CRITICAL: If the user asks for the current time, current date, or current day of the week (e.g. 'what time is it', \"what's today's date\", 'what day is it'), and you do NOT already have a TOOL RESULT for get_current_datetime in this conversation, call it exactly ONCE with 'CALL_TOOL: get_current_datetime, None'. As soon as its TOOL RESULT appears above, answer directly from that result and do NOT call it again.",
+        "CRITICAL: NEVER call the same tool with the same argument more than once. If a '=== TOOL RESULT (...) ===' for what you need already appears earlier in the conversation, you already have the answer — write the final answer now instead of calling the tool again.",
         "CRITICAL: If the user is asking to categorize a task/application under a project, or wants to check how similar activities were labeled, call 'get_similar_labeled_snapshots' to leverage historical human-verified and tag-matched project associations.",
         "",
         "CRITICAL RESPONSE FORMAT RULES:",
@@ -587,7 +726,7 @@ def run_agent_node(state: AgentState) -> AgentState:
         lower_reply = reply.lower()
         planning_signals = ["step 1", "i'll start by", "i will start by", "first step", "first, i'll", "first, i will", "should check recent", "start with getting recent", "let's start with", "let's start by"]
         if any(sig in lower_reply for sig in planning_signals):
-            for t_name in ["get_recent_screenshots", "search_screenshots_semantic", "get_active_projects", "aggregate_project_hours", "query_github", "query_jira", "get_similar_labeled_snapshots"]:
+            for t_name in ["get_activity_for_timeframe", "get_current_datetime", "get_recent_screenshots", "search_screenshots_semantic", "get_active_projects", "aggregate_project_hours", "query_github", "query_jira", "get_similar_labeled_snapshots"]:
                 if t_name in reply:
                     arg = "10" if t_name == "get_recent_screenshots" else "None"
                     print(f"[Fallback Parser] Detected planning words and tool '{t_name}'. Automatically appending CALL_TOOL line.")
@@ -598,7 +737,7 @@ def run_agent_node(state: AgentState) -> AgentState:
     if not match:
         # Heuristic fallback 3: Conversational tool call intent like "Let's call get_active_projects" or "I should check search_screenshots_semantic"
         intent_match = re.search(
-            r"(?:call|run|query|check|use|using|execute|retrieve|get|trigger|need to|should|could|can|start with|first)\b.{0,40}\b(get_recent_screenshots|search_screenshots_semantic|get_active_projects|aggregate_project_hours|query_github|query_jira|get_similar_labeled_snapshots)\b",
+            r"(?:call|run|query|check|use|using|execute|retrieve|get|trigger|need to|should|could|can|start with|first)\b.{0,40}\b(get_activity_for_timeframe|get_current_datetime|get_recent_screenshots|search_screenshots_semantic|get_active_projects|aggregate_project_hours|query_github|query_jira|get_similar_labeled_snapshots)\b",
             reply,
             re.IGNORECASE
         )
@@ -608,7 +747,7 @@ def run_agent_node(state: AgentState) -> AgentState:
             if t_name == "get_recent_screenshots":
                 num_match = re.search(r"\b(\d+)\b", reply[max(0, reply.find(t_name) - 30):reply.find(t_name) + 100])
                 arg = num_match.group(1) if num_match else "10"
-            elif t_name in ["search_screenshots_semantic", "get_similar_labeled_snapshots", "query_github", "query_jira"]:
+            elif t_name in ["search_screenshots_semantic", "get_similar_labeled_snapshots", "query_github", "query_jira", "get_activity_for_timeframe"]:
                 quotes_match = re.search(r"['\"]([^'\"]+)['\"]", reply[max(0, reply.find(t_name) - 50):reply.find(t_name) + 150])
                 if quotes_match:
                     arg = quotes_match.group(1).strip()
@@ -647,6 +786,27 @@ def run_tools_node(state: AgentState) -> AgentState:
 
     tool_name = match.group(1).strip()
     tool_arg = match.group(2).strip()
+
+    # Loop guard: small models tend to re-issue the same tool call instead of answering.
+    # If this exact tool+arg was already executed in this conversation, don't run it again —
+    # nudge the model to answer from the result it already has.
+    signature = f"{tool_name}|{tool_arg}".strip().lower()
+    prior_identical = 0
+    total_prior_calls = 0
+    for m in messages[:-1]:
+        if isinstance(m, AIMessage):
+            pm = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", m.content or "")
+            if pm:
+                total_prior_calls += 1
+                if f"{pm.group(1).strip()}|{pm.group(2).strip()}".strip().lower() == signature:
+                    prior_identical += 1
+    if prior_identical >= 1 or total_prior_calls >= 6:
+        nudge = (
+            f"STOP. You already called {tool_name} and its TOOL RESULT is in the conversation above. "
+            "Do NOT call any tool again. Using the information you already have, write the final, polished "
+            "answer to the user now in clean Markdown — no CALL_TOOL line."
+        )
+        return {"messages": messages + [HumanMessage(content=nudge)], "next_node": "agent"}
 
     # Execute the matching tool
     if tool_name in TOOLS:

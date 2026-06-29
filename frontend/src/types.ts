@@ -27,9 +27,16 @@ export interface DaemonStatus {
   agent_model?: string
 }
 
+export interface ToolCall {
+  name: string
+  arg: string
+  result: string
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  tool_calls?: ToolCall[]
 }
 
 export interface HistoryRecord {

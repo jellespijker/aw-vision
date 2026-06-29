@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -220,6 +221,36 @@ def get_processing_stats():
         return {}
 
 
+def _extract_tool_calls(final_messages: list) -> list:
+    """Reconstruct the agent's tool-call trace from the LangGraph message list.
+
+    Each AIMessage carrying a ``CALL_TOOL: name, arg`` line is one invocation; the
+    HumanMessage immediately after it (``=== TOOL RESULT (name) ===``) holds the result.
+    Returns a list of ``{name, arg, result}`` so the frontend can show what actually ran.
+    """
+    calls = []
+    for idx, msg in enumerate(final_messages):
+        if not isinstance(msg, AIMessage):
+            continue
+        m = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", msg.content or "", re.DOTALL)
+        if not m:
+            continue
+        name = m.group(1).strip()
+        arg = m.group(2).strip()
+        result = ""
+        # The tool result is the next HumanMessage in the trace.
+        for nxt in final_messages[idx + 1:]:
+            if isinstance(nxt, HumanMessage):
+                result = re.sub(r"^=== TOOL RESULT \(.*?\) ===\n?", "", nxt.content or "")
+                break
+            if isinstance(nxt, AIMessage):
+                break
+        if len(result) > 1200:
+            result = result[:1200].rstrip() + "\n… [truncated]"
+        calls.append({"name": name, "arg": arg, "result": result})
+    return calls
+
+
 @app.post("/api/query")
 def post_query(request: QueryRequest):
     """Run conversational queries using the LangGraph ReAct Agent."""
@@ -250,6 +281,7 @@ def post_query(request: QueryRequest):
             last_msg = final_messages[-1]
             return {
                 "response": last_msg.content,
+                "tool_calls": _extract_tool_calls(final_messages),
                 "history": [
                     {
                         "role": "user" if isinstance(m, HumanMessage) else "assistant",
@@ -267,6 +299,70 @@ def post_query(request: QueryRequest):
 
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Agent graph execution error: {e}")
+
+
+def _build_agent_messages(request: "QueryRequest") -> list:
+    """Turn the request prompt + history into the LangChain message list for the graph."""
+    messages = []
+    for h in (request.history or []):
+        role = h.get("role")
+        content = h.get("content")
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            messages.append(AIMessage(content=content))
+    messages.append(HumanMessage(content=request.prompt))
+    return messages
+
+
+@app.post("/api/query/stream")
+def post_query_stream(request: QueryRequest):
+    """Stream the agent's ReAct loop as Server-Sent Events so the UI can show each
+    specific tool call live (name + args), then its result, then the final answer."""
+    import json as _json
+    from fastapi.responses import StreamingResponse
+
+    messages = _build_agent_messages(request)
+
+    def _sse(payload: dict) -> str:
+        return f"data: {_json.dumps(payload)}\n\n"
+
+    def event_gen():
+        tool_calls: list = []
+        try:
+            for update in agent_app.stream({"messages": messages}, stream_mode="updates"):
+                for node, state in update.items():
+                    msgs = state.get("messages", [])
+                    last = msgs[-1] if msgs else None
+                    if last is None:
+                        continue
+                    content = last.content or ""
+                    if node == "tools":
+                        result = re.sub(r"^=== TOOL RESULT \(.*?\) ===\n?", "", content)
+                        if len(result) > 1200:
+                            result = result[:1200].rstrip() + "\n… [truncated]"
+                        if tool_calls:
+                            tool_calls[-1]["result"] = result
+                        yield _sse({
+                            "type": "tool_result",
+                            "name": tool_calls[-1]["name"] if tool_calls else "",
+                            "result": result,
+                        })
+                        continue
+                    # node == "agent": either a CALL_TOOL request or the final answer.
+                    m = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", content, re.DOTALL)
+                    if m:
+                        tc = {"name": m.group(1).strip(), "arg": m.group(2).strip(), "result": ""}
+                        tool_calls.append(tc)
+                        yield _sse({"type": "tool_call", "name": tc["name"], "arg": tc["arg"]})
+                    else:
+                        yield _sse({"type": "final", "response": content, "tool_calls": tool_calls})
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield _sse({"type": "error", "detail": str(e)})
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
 @app.get("/api/screenshots/{filename}")
