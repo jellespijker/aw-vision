@@ -98,6 +98,8 @@ class ProjectModel(BaseModel):
 
 class LabelRequest(BaseModel):
     project_number: Optional[str] = None
+    # When true, propagate the label to the contiguous same-app session block.
+    apply_to_session: bool = False
 
 
 class ReprocessRequest(BaseModel):
@@ -827,15 +829,23 @@ def update_snapshot_label(record_id: str, payload: LabelRequest):
             if proj_num == "" or proj_num.lower() in ("none", "unclassified"):
                 proj_num = None
 
-        db.update_project_label(record_id, proj_num, human_labeled=True)
-        updated = db.get_record_by_id(record_id)
+        # Optionally extend the relabel to the whole contiguous same-app session.
+        target_ids = [record_id]
+        if payload.apply_to_session:
+            block = db.get_session_block(record_id)
+            target_ids = [r.get("id") for r in block if r.get("id")] or [record_id]
 
-        if updated:
-            image_path_val = updated.get("image_path")
+        updated_ids = []
+        for rid in target_ids:
+            db.update_project_label(rid, proj_num, human_labeled=True)
+            updated = db.get_record_by_id(rid)
+            if not updated:
+                continue
+            updated_ids.append(rid)
             db_record = {
                 "id": updated.get("id"),
                 "timestamp": updated.get("timestamp"),
-                "image_path": image_path_val,
+                "image_path": updated.get("image_path"),
                 "window_title": updated.get("window_title"),
                 "app_name": updated.get("app_name"),
                 "is_afk": bool(updated.get("is_afk", False)),
@@ -845,13 +855,19 @@ def update_snapshot_label(record_id: str, payload: LabelRequest):
                 "project_number": proj_num,
                 "human_labeled": True,
             }
-            processor.send_to_aw_server(db_record, record_id)
+            processor.send_to_aw_server(db_record, rid)
 
+        updated = db.get_record_by_id(record_id)
         return {
             "status": "success",
-            "message": f"Successfully updated project label for snapshot {record_id} to '{proj_num}' (human_labeled=True).",
+            "message": (
+                f"Updated project label to '{proj_num}' for {len(updated_ids)} snapshot(s)"
+                + (" in the session block" if payload.apply_to_session and len(updated_ids) > 1 else "")
+                + " (human_labeled=True)."
+            ),
             "project_number": proj_num,
             "human_labeled": True,
+            "updated_ids": updated_ids,
             "unique_things": updated.get("unique_things") if updated else None
         }
     except Exception as e:

@@ -11,7 +11,7 @@ interface LightboxModalProps {
   lightboxViewFull: boolean
   setLightboxViewFull: (val: boolean) => void
   projectsList: Project[]
-  handleUpdateLabel: (recordId: string, projectNumber: string | null) => void
+  handleUpdateLabel: (recordId: string, projectNumber: string | null, applyToSession?: boolean) => void
   handleForceProcess: (fileId: string) => Promise<HistoryRecord | null>
   handleReprocessSnapshots: (options: { ids?: string[]; reprocessOcr?: boolean }) => Promise<boolean>
   processingIds: string[]
@@ -46,6 +46,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [savingContext, setSavingContext] = useState<boolean>(false)
   const [contextStatus, setContextStatus] = useState<'idle' | 'saved' | 'error'>('idle')
   const [reasoningOpen, setReasoningOpen] = useState<boolean>(false)
+  const [applyToSession, setApplyToSession] = useState<boolean>(false)
 
   useEffect(() => {
     // Re-sync the draft whenever a different snapshot is opened
@@ -160,7 +161,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                     value={selectedRecord.project_number || 'None'}
                     onChange={(e) => {
                       const val = e.target.value
-                      handleUpdateLabel(selectedRecord.id, val === 'None' ? null : val)
+                      handleUpdateLabel(selectedRecord.id, val === 'None' ? null : val, applyToSession)
                     }}
                     className="bg-transparent text-[11px] font-semibold text-neutral-dark outline-none cursor-pointer border-0 p-0 pr-1 select-none"
                     aria-label="Select active project classification for modal"
@@ -179,6 +180,20 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                 <span className="bg-surface-container-low text-text-secondary font-semibold px-2.5 py-1 rounded border border-surface-container-high font-sans text-body-sm">
                   Pending classification
                 </span>
+              )}
+              {selectedRecord.is_processed && (
+                <label
+                  title="When checked, changing the project also relabels the contiguous same-app session around this snapshot"
+                  className="flex items-center gap-1.5 cursor-pointer text-[11px] font-semibold text-text-secondary select-none bg-surface-container-low border border-surface-container-high px-2.5 py-1 rounded font-sans"
+                >
+                  <input
+                    type="checkbox"
+                    checked={applyToSession}
+                    onChange={(e) => setApplyToSession(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded border-surface-container-high text-primary"
+                  />
+                  Apply to session
+                </label>
               )}
               <span className="bg-surface-container-low text-text-secondary font-semibold px-2.5 py-1 rounded border border-surface-container-high font-sans text-body-sm">
                 {selectedRecord.app_name}
