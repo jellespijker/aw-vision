@@ -81,6 +81,8 @@ class VisionSweepMixin:
                                 ocr_text=cached_ocr if cached_ocr else None,
                                 extra_context=mcp_ctx_combined or None,
                                 user_context=user_context or None,
+                                app_name=meta.get("app_name"),
+                                window_title=meta.get("window_title"),
                             )
                             meta["ocr_text"] = res.get("ocr_text", "") or cached_ocr or ""
                             meta["description"] = res.get("description", "No description generated.")
@@ -192,6 +194,8 @@ class VisionSweepMixin:
                                     if has_full
                                     else "The image is the focused foreground window."
                                 ),
+                                "app_name": meta.get("app_name") or "Unknown",
+                                "window_title": meta.get("window_title") or "Unknown",
                                 "user_context_block": build_user_context_block(user_context),
                                 "mcp_context_block": build_mcp_context_block(mcp_ctx_vision),
                                 "skills_block": skills_context_for_slot("local_vision"),
@@ -250,6 +254,8 @@ class VisionSweepMixin:
                             prompt_store.get("local_synthesis"),
                             {
                                 "user_context_block": build_user_context_block(user_context),
+                                "app_name": meta.get("app_name") or "Unknown",
+                                "window_title": meta.get("window_title") or "Unknown",
                                 "active_window_description": active_window_description,
                                 "full_desktop_description": full_desktop_description,
                                 "unique_things": unique_things,

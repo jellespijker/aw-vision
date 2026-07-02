@@ -54,7 +54,7 @@ fileignoreconfig:
 - filename: aw_vision/skills.py
   checksum: 14bd90fd1a86e4b04f47d21feee8a3340311e677edd9aae01e9ed656c14160c1
 - filename: aw_vision/prompts.py
-  checksum: ca8237356c1ca366c98d3a60134d0b5cbc11bcd7248005baaf698b91a90e2093
+  checksum: 9f3f1a4104cea6c18d96235ccf8996c444b7c62031597a37b2b6bd460b20cb37
 - filename: frontend/src/components/SkillSettings.tsx
   checksum: 193f57dae36105361dcd1c7f1491ed04ceb661c39012b990353beacbd122fb3d
 version: ""
