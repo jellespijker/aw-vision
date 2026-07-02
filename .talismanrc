@@ -61,4 +61,6 @@ fileignoreconfig:
   checksum: fc34551c728b1ecd72ed01d217f2259f05eb54fa6a8976a0a288cc43f6426be9
 - filename: aw_vision/db/screenshots.py
   checksum: cd599dac865058d243e7e09fb9e3e6787c5693d06b5d111879bb25d8871e8573
+- filename: aw_vision/prompt_eval.py
+  checksum: 9a34c3f5d85e0570d83f946c1ab5067b324eac3047d625fc04ea407793cf99a6
 version: ""
