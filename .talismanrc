@@ -8,7 +8,7 @@ fileignoreconfig:
 - filename: aw_vision/db.py
   checksum: 9e59ee68b5d6487f2cf345554e398a655c8087242236d14b46278d0eed73ba07
 - filename: AGENTS.md
-  checksum: 6519a7c007f975609f1021acef754918212050f78a4e5e8e58e77c50c999565b
+  checksum: dcec782c41448dfb16916610942b640010ae9aa8cb58648884ad8dabc7a116ff
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py

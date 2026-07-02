@@ -12,12 +12,12 @@ The **`aw-vision`** system is an advanced, local-first visual and semantic index
 
 ### Key Workflows & Data Pipelines:
 * **AFK-Aware Ingestion Loop**: The system monitors the user's active/idle status via `aw-server`'s AFK bucket. Screens are only captured when the user is active, protecting resource utilization and preventing redundant disk writes during AFK cycles.
-* **Bulk Processor Pipeline**: Screenshots are batched and processed in moments of low system activity (CPU-aware bulk execution). The pipeline executes:
-  1. **OCR Extraction**: Running local `glm-ocr:q8_0` via Ollama to pull exact text lines from the screen.
-  2. **Vision Analysis**: Running local `gemma4:e2b-it-qat` vision model to generate high-level context descriptions, identify program/app types, and map unique, reusable tags.
-  3. **Joint Embedding Generation**: Creating a 1024-dimensional semantic coordinate vector using `embeddinggemma` over a joint string representation: `Description: ... \n\nExtracted Screen Text: ...`.
-  4. **LanceDB Commits**: Saving metadata, raw OCR strings, and coordinate vectors into local LanceDB.
-* **Storage Retention Lifecycle**: To avoid infinite disk growth, a background daemon scans LanceDB hourly and unlinks raw/processed `.png` files older than 14 days (`max_screenshot_lifetime_days`). Crucially, **the database records, descriptions, OCR texts, and semantic coordinates are kept forever**, ensuring historical activity remains queryable even after physical images are purged.
+* **Provider-Switchable Bulk Processor Pipeline**: Screenshots are batched and processed in moments of low system activity (CPU-aware bulk execution). The active provider (local **Ollama** or cloud **Gemini**) and all model names are configured at runtime in **Settings** (persisted in LanceDB via `settings.py`), not hardcoded. The pipeline executes three staged sweeps per batch:
+  1. **Phase 1 — OCR Extraction**: Local Ollama OCR model (default `glm-ocr:q8_0`) or cloud Gemini OCR pulls exact text lines from the screen.
+  2. **Phase 2 — Vision Analysis & Classification**: Either a single combined multimodal Gemini call, or a two-pass local flow (vision pass → text-only synthesis pass). Produces the foreground/peripheral descriptions, unique artifacts, technical tags, an evidence-based `project_reasoning` trace, the project classification, and the dense "caveman" description.
+  3. **Phase 3 — Embedding & Commit**: Generates the semantic vector (local `embeddinggemma` or multimodal Gemini embeddings; dimension probed dynamically) over the joint metadata/description/OCR/user-note text and commits everything to local LanceDB.
+* **User-Steerable Analysis**: Every prompt in the pipeline is a user-editable template (**Settings → Prompts**, `prompts.py`) rendered with safe single-brace placeholder substitution. Users can attach **MCP servers** (`mcp_manager.py`) and **Claude Skills** (`skills.py`) to individual prompt slots (`local_vision`, `local_synthesis`, `gemini_combined`, `agent`) to inject external tool context or expert instructions. Each snapshot also carries an optional free-text **user context note** (`user_context`) that is treated as authoritative evidence during (re)processing.
+* **Storage Retention Lifecycle**: To avoid infinite disk growth, a background daemon scans LanceDB hourly and unlinks raw/processed `.png` files older than 14 days (`max_screenshot_lifetime_days`). Crucially, **the database records, descriptions, OCR texts, reasoning traces, and semantic coordinates are kept forever**, ensuring historical activity remains queryable even after physical images are purged.
 
 ---
 
@@ -58,29 +58,44 @@ aw-vision/
 │
 ├── .flake8                  # Python linting configuration
 ├── .pre-commit-config.yaml  # Git pre-commit hooks configuration
+├── .talismanrc              # Talisman secret-scanner false-positive checksums
 ├── pyproject.toml           # Poetry dependencies and group settings
 ├── config.toml              # User configurations (retention, models, etc.)
 ├── projects.json            # Configured active projects definitions
 │
 ├── aw_vision/               # Core source package
-│   ├── __init__.py          # Package initialization
 │   ├── config.py            # Configuration loader and parser
-│   ├── db.py                # LanceDB database schemas and query migrations
+│   ├── settings.py          # Runtime settings store (LanceDB-persisted, encrypted keys)
 │   ├── watcher.py           # AFK-aware desktop screenshot capture loop
-│   ├── processor.py         # OCR & Vision processing and retention daemon
-│   ├── server.py            # FastAPI web server and backend API
-│   └── agent.py             # LangGraph ReAct agent & tools registry
+│   ├── embedding.py         # Provider-agnostic embedding text builder & vector generation
+│   ├── prompts.py           # Editable pipeline prompt templates (PromptStore + defaults)
+│   ├── skills.py            # Claude Skills upload, storage & prompt-slot injection
+│   ├── mcp_manager.py       # MCP server configs, tool discovery & slot routing
+│   ├── customization_api.py # APIRouter for prompt/skill endpoints
+│   ├── server.py            # FastAPI web server and backend API (port 5666)
+│   ├── agent.py             # LangGraph ReAct agent & tools registry
+│   ├── db/                  # LanceDB package: schema, screenshots, projects,
+│   │                        #   analytics, re-embedding migrations
+│   ├── gemini/              # Gemini cloud client: http, vision, chat, embeddings
+│   └── processor/           # BulkProcessor mixins: monitor, ocr, mirror,
+│                            #   vision_sweep, batch, retention, text
 │
+├── frontend/                # React + TypeScript + Vite + Tailwind web UI
+│   └── src/components/      # GalleryTab, LightboxModal, SettingsTab, McpSettings,
+│                            #   PromptSettings, SkillSettings, AgentTab, ...
+├── deploy/                  # systemd user service unit files
 └── tests/                   # Automated unit and integration tests
 ```
 
 ### Module Responsibilities:
 1. **`config.py`**: Reads and structures parameters from `config.toml` (or env variables) such as Ollama hosts, model configurations, and storage directories.
-2. **`db.py`**: Defines Arrow table schemas, handles database writes/retrievals, manages globally sorted history queries, and executes python-dict schema migrations.
-3. **`watcher.py`**: Periodically queries `aw-server`'s AFK state. If active, triggers screen-grabbing CLI utilities (like `grim` or `spectacle`) and saves raw images.
-4. **`processor.py`**: Gathers raw images, runs CPU-aware checks, executes OCR (`glm-ocr:q8_0`), performs LLM Vision analysis (`gemma4:e2b-it-qat`), computes embeddings (`embeddinggemma`), and handles the hourly retention purge.
-5. **`server.py`**: Serves as the FastAPI gateway running on port `5666`. Exposes history streams, status checks, Q&A agent loops, and static screenshot assets.
-6. **`agent.py`**: Implements the LangGraph-based ReAct agent, defining capabilities like `search_screenshots_semantic`, `get_active_projects`, `aggregate_project_hours`, `query_github`, and `query_jira`.
+2. **`settings.py`**: Runtime-tunable settings (provider, models, intervals) persisted in LanceDB; sensitive values are AES-256 encrypted with a hardware-derived key.
+3. **`db/`**: Defines Arrow table schemas (including `user_context` and `analysis_reasoning` columns), handles database writes/retrievals, globally sorted history queries, schema migrations, and re-embedding runs.
+4. **`watcher.py`**: Periodically queries `aw-server`'s AFK state. If active, triggers screen-grabbing CLI utilities (like `grim` or `spectacle`) and saves raw images.
+5. **`processor/`**: Gathers raw images, runs CPU-aware checks, and executes the three-phase OCR → vision/classification → embed/commit sweeps plus the hourly retention purge.
+6. **`prompts.py` / `skills.py` / `mcp_manager.py`**: The customization layer — editable prompt templates, uploaded Claude Skills, and MCP servers, each assignable to individual pipeline/agent prompt slots.
+7. **`server.py` + `customization_api.py`**: FastAPI gateway on port `5666`. Exposes history streams, status checks, Q&A agent loops, settings, prompt/skill/MCP management, snapshot labeling & user-context notes, and static screenshot assets. Also serves the built React frontend from `frontend/dist`.
+8. **`agent.py`**: Implements the LangGraph-based ReAct agent, defining capabilities like `search_screenshots_semantic`, `get_active_projects`, `aggregate_project_hours`, `query_github`, and `query_jira`, plus dynamically discovered MCP tools and skill guidance assigned to the `agent` slot.
 
 ---
 
@@ -110,26 +125,34 @@ ollama run embeddinggemma
 ```
 
 ### 3. aw-vision Python Backend
-Install the project dependencies and launch the FastAPI server on port `5666`:
+The backend is normally managed by the systemd user services in `deploy/` (e.g. `aw-vision-backend-dev.service`, which runs uvicorn with `--reload`). Restart it with:
+```bash
+systemctl --user restart aw-vision-backend-dev.service
+journalctl --user -u aw-vision-backend-dev.service -f   # live logs
+```
+**WARNING — never start uvicorn manually while a service is running**: a second instance spawns duplicate watcher threads and captures screenshots at a rapid rate instead of the configured interval. The startup port-guard mitigates this, but don't rely on it. For a machine without the services installed:
 ```bash
 cd aw-vision
 poetry install
 poetry run uvicorn aw_vision.server:app --host 127.0.0.1 --port 5666 --reload
 ```
 
-### 4. Vue Web UI Dashboard
-Navigate to your active `aw-webui` directory and launch the Vue dev server on port `27180`:
+### 4. React Web UI
+The frontend lives in `frontend/` (React + TypeScript + Vite + Tailwind). The backend serves the production build from `frontend/dist` at `http://localhost:5666`:
 ```bash
-cd activitywatch/aw-server/aw-webui
-npm run serve
+cd frontend
+npm install
+npm run build      # tsc typecheck + vite build → served by the backend
+npm run dev        # OR: hot-reloading Vite dev server for UI work
 ```
-Open `http://localhost:27180/#/vision` to inspect the live premium dashboard!
 
 ---
 
 ## 6. Privacy, Security & Data Sovereignty
 
-* **100% Local Processing Guarantee**: Because screenshots contain sensitive, high-fidelity user information (such as personal emails, banking details, passwords, and source code), **`aw-vision` processes everything on-device**. No screenshots, OCR texts, or metadata are ever transmitted to any remote cloud API. All deep learning models run locally via Ollama.
+* **Local-First Processing**: Because screenshots contain sensitive, high-fidelity user information (such as personal emails, banking details, passwords, and source code), `aw-vision` is local-first: storage is always on-device (LanceDB + local image files) and the default pipeline runs entirely on local Ollama models.
+* **Opt-In Cloud Providers — Handle With Care**: When the user explicitly selects the **Gemini** provider (or Gemini OCR/embeddings) in Settings, screenshots and extracted text ARE transmitted to Google's Generative Language API for that processing step. The same applies to remote MCP servers the user connects. Agents modifying the pipeline must preserve this boundary: **never add a code path that sends screenshot data off-device unless the user has explicitly enabled a cloud provider or assigned a remote integration to that slot.**
+* **Secrets Encrypted At Rest**: API keys and MCP auth tokens are AES-256 encrypted with a hardware-derived key before touching disk.
 * **Strict Disk Purges**: To prevent unauthorized physical access to old screenshots on lost or compromised hardware, screenshot image files are permanently wiped from the host disk after 14 days, reducing the static physical security exposure.
 
 ---
@@ -159,7 +182,7 @@ You can manually run checks on staged files or across the whole repository:
 poetry run pre-commit run --all-files
 
 # Run on specific files
-poetry run pre-commit run --files aw_vision/db.py
+poetry run pre-commit run --files aw_vision/server.py
 ```
 
 ### Hook Skip Policy:
@@ -170,20 +193,25 @@ poetry run pre-commit run --files aw_vision/db.py
 
 ## 8. Visual Validation & Verification (V&V) Guidelines
 
-Before submitting any frontend changes (such as updates to `Vision.vue`), you must systematically verify visual rendering and interface usability under different states:
+Before submitting any frontend changes (React components under `frontend/src/components/`), you must systematically verify visual rendering and interface usability under different states:
 
 ### State 1: Happy Path (Populated Dashboard)
-* Ensure all status cards show "ACTIVE" (green pulse dots).
-* Confirm historical screenshot cards render high-quality images and show complete layouts.
-* Click the raw OCR text button on a card and ensure the collapsible monospaced panel expands smoothly, allowing raw text copy-paste.
-* Enter a query in the Chat Agent box and ensure the ReAct loops, tool results, and markdown summaries render correctly.
+* Ensure the sidebar System Status entries show "ACTIVE"/"ONLINE" (green dots).
+* Confirm Screenshot Library cards render high-quality images and show complete layouts in both Carousel and Grid view.
+* Open the lightbox on a processed snapshot: the OCR panel, "My Context Note" editor, and "Classification Reasoning" section must expand/collapse smoothly, and saving a context note must round-trip.
+* Enter a query in the Ask Memory Agent box and ensure the ReAct loops, tool results, and markdown summaries render correctly.
 
 ### State 2: Unhappy Path (Archived Images)
-* Verify that historical records older than 14 days (where `image_path` is null) render gracefully using the glassmorphic archived placeholder.
-* Confirm that the metadata card shows the archive cabinet icon and the explicit message: `"Archived Metadata (Screenshot purged to save space)"`.
+* Verify that historical records older than 14 days (where `image_path` is null) render gracefully using the archived placeholder.
+* Confirm that the lightbox shows the archive icon and the explicit "Screenshot Image Archived" explanation.
 * Ensure that the collapsible monospaced raw OCR preview panel still expands and functions perfectly for archived rows.
 
 ### State 3: Backend Offline
-* Shutdown the `server.py` FastAPI backend.
-* Ensure the top alert banner displays immediately: `"aw-vision Backend is Offline"`, presenting clear terminal instructions on how to start the FastAPI server.
+* Shutdown the FastAPI backend service.
+* Ensure the alert banner displays immediately that the backend is offline, presenting clear instructions on how to start it.
 * Confirm that clicking "Retry Connection" executes a clean reconnection attempt and hides the banner once the backend is brought back online.
+
+### State 4: Settings & Customization
+* In **Settings → Prompts**, expand a prompt, edit it, save, confirm the "Customized" badge appears, then reset to default.
+* In **Settings → Claude Skills**, upload a `SKILL.md`, assign it to a prompt slot, toggle it, and delete it.
+* In **Settings → MCP Integrations**, confirm the server list, editor, and Test Connection flow render correctly.
