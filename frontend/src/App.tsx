@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import { EyeOff, RefreshCw } from 'lucide-react'
 
-import type { DaemonStatus, HistoryRecord, Project, ChatMessage, TimelineEntry } from './types'
+import type { DaemonStatus, HistoryRecord, Project, ChatMessage, TimelineEntry, ToolCall } from './types'
 import { NotificationToast } from './components/NotificationToast'
 import { Sidebar } from './components/Sidebar'
 import { AgentTab } from './components/AgentTab'
@@ -40,6 +40,8 @@ export default function App() {
   const [agentPrompt, setAgentPrompt] = useState<string>('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [querying, setQuerying] = useState<boolean>(false)
+  // Tool calls observed live while the current query's ReAct graph is streaming.
+  const [liveToolCalls, setLiveToolCalls] = useState<ToolCall[]>([])
 
   // Gallery/Search States
   const [searchQuery, setSearchQuery] = useState<string>('')
@@ -548,25 +550,75 @@ export default function App() {
     const updatedHistory = [...chatMessages, { role: 'user', content: userPrompt } as ChatMessage]
     setChatMessages(updatedHistory)
     setQuerying(true)
+    setLiveToolCalls([])
+
+    // Streamed tool calls accumulated locally as SSE events arrive.
+    const collected: ToolCall[] = []
+    let finalResponse = ''
+    let errored = ''
 
     try {
-      const resp = await axios.post('/api/query', {
-        prompt: userPrompt,
-        history: chatMessages
+      const resp = await fetch(`${API_BASE}/api/query/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: userPrompt, history: chatMessages })
       })
-      if (resp.status === 200) {
-        setChatMessages([...updatedHistory, { role: 'assistant', content: resp.data.response }])
+      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`)
+
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      // Parse the SSE byte stream into `data: {...}` events.
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split('\n\n')
+        buffer = events.pop() || ''
+        for (const evt of events) {
+          const line = evt.split('\n').find((l) => l.startsWith('data:'))
+          if (!line) continue
+          let data: any
+          try {
+            data = JSON.parse(line.slice(5).trim())
+          } catch {
+            continue
+          }
+          if (data.type === 'tool_call') {
+            collected.push({ name: data.name, arg: data.arg, result: '' })
+            setLiveToolCalls([...collected])
+          } else if (data.type === 'tool_result') {
+            if (collected.length) collected[collected.length - 1].result = data.result
+            setLiveToolCalls([...collected])
+          } else if (data.type === 'final') {
+            finalResponse = data.response
+            if (Array.isArray(data.tool_calls)) {
+              collected.splice(0, collected.length, ...data.tool_calls)
+            }
+          } else if (data.type === 'error') {
+            errored = data.detail || 'Unknown agent error'
+          }
+        }
       }
+
+      if (errored) throw new Error(errored)
+      setChatMessages([
+        ...updatedHistory,
+        { role: 'assistant', content: finalResponse, tool_calls: collected }
+      ])
     } catch (e: any) {
       setChatMessages([
         ...updatedHistory,
         {
           role: 'assistant',
-          content: `Failed to receive answer from agent. Make sure Ollama model is loaded correctly. Error: ${e.message}`
+          content: `Failed to receive answer from agent. Make sure Ollama model is loaded correctly. Error: ${e.message}`,
+          tool_calls: collected.length ? collected : undefined
         }
       ])
     } finally {
       setQuerying(false)
+      setLiveToolCalls([])
     }
   }
 
@@ -669,6 +721,7 @@ export default function App() {
                   chatMessages={chatMessages}
                   clearChat={clearChat}
                   querying={querying}
+                  liveToolCalls={liveToolCalls}
                   agentPrompt={agentPrompt}
                   setAgentPrompt={setAgentPrompt}
                   submitAgentQuery={submitAgentQuery}
