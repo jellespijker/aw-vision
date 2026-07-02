@@ -82,9 +82,10 @@ Perform the following tasks:
    b. Name the matching catalog candidates and the ruled-out near-misses, each with its deciding evidence.
    c. Weigh continuity: neighboring and human-verified snapshots on the same application forming a continuous block of activity are strong evidence.
    d. Conclude whether the best match is DIRECT (explicit identifier/description overlap) or merely THEMATIC. Only a direct match justifies classification.
-6. Project classification ('project_number'): Based ONLY on your reasoning above, output the single best catalog project number, or "None" when the evidence is thematic, indirect, or ambiguous. Do NOT match on inactive sidebar chats, adjacent tab names, browser bookmarks, or company names alone. Stay consistent with the user-provided context note when present.
-7. Technical tags ('tags'): Generate 3 to 7 highly relevant, technical tags. Reuse these existing database tags VERBATIM when they apply: [{existing_tags}]. New tags must be short technical noun phrases (1-3 words); never emit near-synonyms of an existing tag.
-8. Synthesis ('description'): One ultra-dense, technical "Caveman-style" summary of at most ~50 words. Speak in fragments, use semicolons, omit filler words (the, a, is, was, were, to, of, for). Every concrete identifier from the evidence (files, functions, tickets, URLs) must survive into it verbatim.
+6. Match type ('match_type'): Output exactly one of "direct", "thematic", or "none" — the conclusion of your reasoning above.
+7. Project classification ('project_number'): Based ONLY on your reasoning above, output the single best catalog project number, or "None" when the evidence is thematic, indirect, or ambiguous. Do NOT match on inactive sidebar chats, adjacent tab names, browser bookmarks, or company names alone. Stay consistent with the user-provided context note when present.
+8. Technical tags ('tags'): Generate 3 to 7 highly relevant, technical tags. Reuse these existing database tags VERBATIM when they apply: [{existing_tags}]. New tags must be short technical noun phrases (1-3 words); never emit near-synonyms of an existing tag.
+9. Synthesis ('description'): One ultra-dense, technical "Caveman-style" summary of at most ~50 words. Speak in fragments, use semicolons, omit filler words (the, a, is, was, were, to, of, for). Every concrete identifier from the evidence (files, functions, tickets, URLs) must survive into it verbatim.
    Example: "Dev aw-vision UI. Refactored GalleryTab.tsx list component; unique elements via exact CSS tokens; PR #22 review."
 
 Project Reference Catalog:
@@ -97,6 +98,7 @@ You must respond in valid JSON format matching this exact schema (keep the key o
   "full_desktop_description": "string",
   "unique_things": "string",
   "project_reasoning": "string",
+  "match_type": "direct | thematic | none",
   "project_number": "string",
   "tags": ["string"],
   "description": "string"
@@ -138,20 +140,22 @@ _LOCAL_SYNTHESIS_DEFAULT = """You are indexing a desktop snapshot for a searchab
 Project Reference Catalog:
 {projects}
 
-Produce exactly four outputs, in this order:
+Produce exactly five outputs, in this order:
 1. project_reasoning: Reason step by step BEFORE deciding. Keep it terse — evidence fragments, not prose, under ~120 words:
    a. List the strongest pieces of evidence (identifiers, file paths, ticket prefixes, repository names, the window title, the user-provided context note when present).
    b. Name the matching catalog candidates and the ruled-out near-misses, each with its deciding evidence.
    c. Weigh continuity: neighboring and human-verified snapshots on the same application forming a continuous block of activity are strong evidence.
    d. Conclude whether the best match is DIRECT (explicit identifier/description overlap) or merely THEMATIC.
-2. project_number: Based ONLY on the reasoning above, classify this activity into ONE catalog project. Be conservative: if there is no direct, explicit link between the active screen contents and a project's description/entailment, output "None". Do NOT match on inactive sidebar chats, adjacent tab names, browser bookmarks, or external company profiles. If the screen shows a lock screen, blank desktop, or idle content, output "None".
-3. tags: 3 to 7 highly relevant, technical tags/keywords for this task. Reuse these existing database tags VERBATIM when they apply: {existing_tags}. New tags must be short technical noun phrases (1-3 words); never emit near-synonyms of an existing tag.
-4. description: An ultra-dense, highly precise "Caveman-style" work summary of at most ~50 words. Omit filler words (the, a, is, was, were, to, of, for); use dense technical fragments separated by semicolons/periods. Every concrete identifier from the evidence (file names, functions, URLs, tickets) must survive into it verbatim — never replace them with generic activity words.
+2. match_type: Output exactly one of "direct", "thematic", or "none" — the conclusion of your reasoning above.
+3. project_number: Based ONLY on the reasoning above, classify this activity into ONE catalog project. Be conservative: if there is no direct, explicit link between the active screen contents and a project's description/entailment, output "None". Do NOT match on inactive sidebar chats, adjacent tab names, browser bookmarks, or external company profiles. If the screen shows a lock screen, blank desktop, or idle content, output "None".
+4. tags: 3 to 7 highly relevant, technical tags/keywords for this task. Reuse these existing database tags VERBATIM when they apply: {existing_tags}. New tags must be short technical noun phrases (1-3 words); never emit near-synonyms of an existing tag.
+5. description: An ultra-dense, highly precise "Caveman-style" work summary of at most ~50 words. Omit filler words (the, a, is, was, were, to, of, for); use dense technical fragments separated by semicolons/periods. Every concrete identifier from the evidence (file names, functions, URLs, tickets) must survive into it verbatim — never replace them with generic activity words.
    Example: "Dev aw-vision UI. Refactored GalleryTab.tsx list component; unique elements via exact CSS tokens; PR #22 review."
 
 You must respond in valid JSON format matching this exact schema (keep the key order — reasoning comes before the decision):
 {
   "project_reasoning": "string",
+  "match_type": "direct | thematic | none",
   "project_number": "string (catalog project number, or \\"None\\")",
   "tags": ["string"],
   "description": "string"
