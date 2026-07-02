@@ -321,6 +321,38 @@ def tool_get_recent_screenshots(limit: Union[int, str] = 10) -> str:
         return f"Error retrieving recent screenshots: {e}"
 
 
+def tool_find_person_moments(name: str) -> str:
+    """Find all snapshots where a specific person was involved (chats, mails, meetings, mentions)."""
+    from aw_vision.db import db
+
+    query = (name or "").strip()
+    if not query:
+        return "Error: provide a person name to search for."
+    query_lower = query.lower()
+    try:
+        records = db.get_all_records(limit=100000)
+        matches = [
+            r for r in records
+            if any(query_lower in str(n).lower() for n in (r.get("people") or []))
+        ]
+        if not matches:
+            return (
+                f"No snapshots list '{query}' as a recognized person. "
+                "Tip: fall back to search_screenshots_semantic with the name as the query."
+            )
+        lines = [f"Found {len(matches)} snapshot(s) involving '{query}' (newest first):"]
+        for r in matches[:25]:
+            ts = datetime.fromtimestamp(r.get("timestamp", 0)).strftime("%Y-%m-%d %H:%M")
+            people = ", ".join(r.get("people") or [])
+            lines.append(
+                f"- [{ts}] {r.get('app_name', 'Unknown')} | {r.get('window_title', 'Unknown')} | "
+                f"Proj: {r.get('project_number') or 'None'} | People: {people} | {r.get('description', '')[:160]}"
+            )
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error searching person moments: {e}"
+
+
 # Export a tool mapping
 TOOLS = {
     "search_screenshots_semantic": tool_search_screenshots_semantic,
@@ -330,6 +362,7 @@ TOOLS = {
     "aggregate_project_hours": tool_aggregate_project_hours,
     "query_github": tool_query_github,
     "query_jira": tool_query_jira,
+    "find_person_moments": tool_find_person_moments,
 }
 
 
@@ -453,6 +486,7 @@ def run_agent_node(state: AgentState) -> AgentState:
         "- aggregate_project_hours(): Return total active hours spent on each project number.",
         "- query_github(query): Find commits, PRs, or issues on user's GitHub repositories.",
         "- query_jira(jql): Search Jira issues.",
+        "- find_person_moments(name): Find every snapshot where a specific person was involved (chats, mails, meetings, code reviews, mentions), using the structured people index.",
     ]
 
     # Append any MCP tools the user assigned to the Ask Memory Agent (uniform registry).
@@ -486,8 +520,10 @@ def run_agent_node(state: AgentState) -> AgentState:
         "",
         "CRITICAL: Always perform 'search_screenshots_semantic' first if the user is asking about past active sessions,",
         "such as browsing website pages, looking for sneakers, reading files, or coding topics.",
-        "CRITICAL: Always perform 'search_screenshots_semantic' first if the user asks about a specific person (e.g., 'Who is Sergii?', 'What did I discuss with Arjen?'),",
-        "specific projects, files, websites, or chat conversations. Do not assume you know them from your pre-trained weights; always search your local computer memory first.",
+        "CRITICAL: If the user asks about a specific person (e.g., 'Who is Sergii?', 'What did I discuss with Arjen?', 'When did I last work with Casper?'),",
+        "call 'find_person_moments' first — it queries the structured people index. Fall back to 'search_screenshots_semantic' when it finds nothing.",
+        "CRITICAL: Always perform 'search_screenshots_semantic' first if the user asks about specific projects, files, websites, or chat conversations.",
+        "Do not assume you know them from your pre-trained weights; always search your local computer memory first.",
         "CRITICAL: Always use 'get_recent_screenshots' if the user asks what they worked on recently (e.g., in the past hour, today, this morning, or wants a timeline of recent activity).",
         "CRITICAL: If the user is asking to categorize a task/application under a project, or wants to check how similar activities were labeled, call 'get_similar_labeled_snapshots' to leverage historical human-verified and tag-matched project associations.",
         "",

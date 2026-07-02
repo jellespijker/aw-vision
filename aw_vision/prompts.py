@@ -87,6 +87,7 @@ Perform the following tasks:
 8. Technical tags ('tags'): Generate 3 to 7 highly relevant, technical tags. Reuse these existing database tags VERBATIM when they apply: [{existing_tags}]. New tags must be short technical noun phrases (1-3 words); never emit near-synonyms of an existing tag.
 9. Synthesis ('description'): One ultra-dense, technical "Caveman-style" summary of at most ~50 words. Speak in fragments, use semicolons, omit filler words (the, a, is, was, were, to, of, for). Every concrete identifier from the evidence (files, functions, tickets, URLs) must survive into it verbatim.
    Example: "Dev aw-vision UI. Refactored GalleryTab.tsx list component; unique elements via exact CSS tokens; PR #22 review."
+10. People ('people'): Extract the full names of people visibly involved in this activity: chat/meeting participants, email senders and recipients, commit or review authors, document co-editors, and people substantively mentioned in the visible text. Use the fullest visible form of each name ("Casper Lambo", not "Casper" if the surname is visible), deduplicate, and NEVER include generic labels (You, Me, Unknown, Admin), bot/system accounts, company names, or names you cannot actually read. Output an empty list when no people are visible.
 
 Project Reference Catalog:
 {projects}
@@ -101,7 +102,8 @@ Project Reference Catalog:
   "match_type": "direct | thematic | none",
   "project_number": "string",
   "tags": ["string"],
-  "description": "string"
+  "description": "string",
+  "people": ["string"]
 }"""
 )
 
@@ -140,7 +142,7 @@ _LOCAL_SYNTHESIS_DEFAULT = """You are indexing a desktop snapshot for a searchab
 Project Reference Catalog:
 {projects}
 
-{tools_block}Produce exactly five outputs, in this order:
+{tools_block}Produce exactly six outputs, in this order:
 1. project_reasoning: Reason step by step BEFORE deciding. Keep it terse — evidence fragments, not prose, under ~120 words:
    a. List the strongest pieces of evidence (identifiers, file paths, ticket prefixes, repository names, the window title, the user-provided context note when present).
    b. Name the matching catalog candidates and the ruled-out near-misses, each with its deciding evidence.
@@ -151,6 +153,7 @@ Project Reference Catalog:
 4. tags: 3 to 7 highly relevant, technical tags/keywords for this task. Reuse these existing database tags VERBATIM when they apply: {existing_tags}. New tags must be short technical noun phrases (1-3 words); never emit near-synonyms of an existing tag.
 5. description: An ultra-dense, highly precise "Caveman-style" work summary of at most ~50 words. Omit filler words (the, a, is, was, were, to, of, for); use dense technical fragments separated by semicolons/periods. Every concrete identifier from the evidence (file names, functions, URLs, tickets) must survive into it verbatim — never replace them with generic activity words.
    Example: "Dev aw-vision UI. Refactored GalleryTab.tsx list component; unique elements via exact CSS tokens; PR #22 review."
+6. people: Extract the full names of people visibly involved in this activity: chat/meeting participants, email senders and recipients, commit or review authors, document co-editors, and people substantively mentioned in the visible text. Use the fullest visible form of each name ("Casper Lambo", not "Casper" if the surname is visible), deduplicate, and NEVER include generic labels (You, Me, Unknown, Admin), bot/system accounts, company names, or names you cannot actually read. Output an empty list when no people are visible.
 
 You must respond in valid JSON format matching this exact schema (keep the key order — reasoning comes before the decision):
 {
@@ -158,7 +161,8 @@ You must respond in valid JSON format matching this exact schema (keep the key o
   "match_type": "direct | thematic | none",
   "project_number": "string (catalog project number, or \\"None\\")",
   "tags": ["string"],
-  "description": "string"
+  "description": "string",
+  "people": ["string"]
 }"""
 
 
