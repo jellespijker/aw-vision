@@ -196,6 +196,27 @@ The shape language is conservative and professional.
 ### Progress Patterns
 - Quantitative monitoring components must use `Noto Sans` for the primary value and `IBM Plex Mono` for the units/labels to ensure high-impact technical clarity.
 
+### Collapsible Disclosure Sections
+Used throughout the lightbox (OCR text, "My Context Note", "Classification Reasoning", processing logs) and the Settings editors:
+- **Header row**: full-width button with a 10px uppercase `Messina Sans` micro-label (wide letter-spacing, `text-secondary`), a 16px primary-tinted leading icon, and a trailing chevron (`Chevron--right` collapsed, `Chevron--down` expanded).
+- **Body**: revealed content sits on a `surface-container-lowest` inset panel with a 1px border, 4px radius, and internal scrolling capped around 12rem for long content.
+- Raw machine text (OCR, skill instructions, logs) inside a disclosure always uses `IBM Plex Mono` with `whitespace-pre-wrap`.
+
+### Editor Panels (Prompts & Notes)
+- Multiline template/note editors use a full-width `IBM Plex Mono` textarea (12px) on `surface-container-lowest` with a 1px border that switches to Primary Blue on focus. Spellcheck is disabled for machine-oriented text.
+- Insertable token chips (e.g. prompt `{placeholders}`) are 10px mono badges with a 1px border; clicking a chip appends the token to the editor.
+- Editor action rows pair a destructive-neutral secondary action on the left ("Reset to Default") with the primary save action on the right; both disable (40% opacity) when there is nothing to apply.
+- A customized-state badge (10px uppercase mono, `accent-surface` fill, primary text) marks entities that deviate from their built-in default.
+
+### Assignment Matrix
+Used by MCP Integrations and Claude Skills to wire an integration into individual pipeline/agent prompt slots:
+- Slots are grouped per pipeline into bordered `surface-container-lowest` panels headed by a 10px uppercase mono group label.
+- Each slot is a 16px checkbox + `IBM Plex Sans` body-sm label row; the whole row is clickable.
+- Active assignments render elsewhere as pill badges (10px, `accent-surface` fill, primary text).
+
+### File Upload Actions
+- Uploads use a primary button with an `Upload` icon that triggers a hidden file input (no drag-and-drop zone), with accepted extensions constrained at the input level. During upload the icon swaps for a spinner and the button disables.
+
 ---
 
 ## Companion Guides

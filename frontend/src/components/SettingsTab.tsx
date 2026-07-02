@@ -19,9 +19,13 @@ import {
   ShieldAlert,
   Plug,
   Camera,
-  Clock
+  Clock,
+  FileTerminal,
+  GraduationCap
 } from 'lucide-react'
 import { McpSettings } from './McpSettings'
+import { PromptSettings } from './PromptSettings'
+import { SkillSettings } from './SkillSettings'
 
 interface SettingsTabProps {
   showNotification: (text: string, type: 'success' | 'danger') => void
@@ -71,7 +75,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
   const [showKey, setShowKey] = useState<boolean>(false)
 
   // Active settings sub-section (tab within the Settings page)
-  type SettingsSection = 'provider' | 'models' | 'agent' | 'capture' | 'database' | 'mcp'
+  type SettingsSection = 'provider' | 'models' | 'agent' | 'capture' | 'database' | 'mcp' | 'prompts' | 'skills'
   const [section, setSection] = useState<SettingsSection>('provider')
 
   // API testing states
@@ -272,7 +276,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
     { id: 'agent', label: 'Memory Agent', icon: Bot },
     { id: 'capture', label: 'Capture', icon: Camera },
     { id: 'database', label: 'Database', icon: Database },
-    { id: 'mcp', label: 'MCP Integrations', icon: Plug }
+    { id: 'mcp', label: 'MCP Integrations', icon: Plug },
+    { id: 'prompts', label: 'Prompts', icon: FileTerminal },
+    { id: 'skills', label: 'Claude Skills', icon: GraduationCap }
   ]
 
   return (
@@ -323,6 +329,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
 
       {section === 'mcp' ? (
         <McpSettings showNotification={showNotification} />
+      ) : section === 'prompts' ? (
+        <PromptSettings showNotification={showNotification} />
+      ) : section === 'skills' ? (
+        <SkillSettings showNotification={showNotification} />
       ) : (
       <form onSubmit={saveSettings} className="space-y-6">
         {/* SECTION: Provider */}

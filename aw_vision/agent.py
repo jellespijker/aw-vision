@@ -628,6 +628,17 @@ def run_agent_node(state: AgentState) -> AgentState:
             "of arguments (e.g. CALL_TOOL: mcp_search_issues, {\"jql\": \"project = ABC\"})."
         )
 
+    # Append guidance from any Claude Skills the user assigned to the agent slot.
+    try:
+        from aw_vision.skills import skills_context_for_slot
+
+        skills_block = skills_context_for_slot("agent")
+        if skills_block:
+            prompt_lines.append("")
+            prompt_lines.append(skills_block.rstrip())
+    except Exception as e:
+        print(f"[Memory Agent] Could not load skill guidance: {e}")
+
     prompt_lines += [
         "",
         "CRITICAL: Always perform 'search_screenshots_semantic' first if the user is asking about past active sessions,",

@@ -10,7 +10,9 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from aw_vision.gemini.http import _get_resolved_llm_model, gemini_request_with_retry
+from aw_vision.prompts import build_mcp_context_block, build_user_context_block, prompt_store, render_prompt
 from aw_vision.settings import settings_store
+from aw_vision.skills import skills_context_for_slot
 
 
 def query_gemini_models(api_key: Optional[str] = None) -> List[Dict[str, str]]:
@@ -62,9 +64,7 @@ def run_gemini_ocr(img_path: Path, api_key: Optional[str] = None) -> str:
             {
                 "parts": [
                     {"inlineData": {"mimeType": "image/png", "data": img_b64}},
-                    {
-                        "text": "Extract all readable text, titles, labels, browser URLs, files, or characters shown on this desktop screenshot exactly as shown. Do not explain, describe, or add any meta-commentary. Just output the extracted text."
-                    },
+                    {"text": prompt_store.get("gemini_ocr")},
                 ]
             }
         ]
@@ -84,6 +84,10 @@ def run_gemini_combined_ocr_vision(
     existing_tags: List[str],
     ocr_text: Optional[str] = None,
     extra_context: Optional[str] = None,
+    user_context: Optional[str] = None,
+    app_name: Optional[str] = None,
+    window_title: Optional[str] = None,
+    history_context: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Perform screenshot OCR and Vision Analysis simultaneously in a single, high-efficiency Gemini multimodal API call."""
     key = settings_store.get("gemini_api_key")
@@ -112,45 +116,30 @@ def run_gemini_combined_ocr_vision(
     projects_str = json.dumps(projects, indent=2, ensure_ascii=False)
     tags_str = ", ".join(existing_tags[:100])
 
-    mcp_context_block = ""
-    if extra_context:
-        mcp_context_block = (
-            "\nExternal MCP Tool Context (authoritative supplementary data from connected "
-            f"integrations such as GitHub/Jira; use it to improve project classification and tags):\n{extra_context}\n"
-        )
-
     ocr_instruction = (
-        "1. OCR: Extract all readable text, titles, labels, browser URLs, files, or characters shown on the screen exactly as displayed. Put this in 'ocr_text'. Keep it clean and unformatted."
+        "Extract all readable text, titles, labels, browser URLs, files, or characters shown on the screen exactly as displayed. Put this in 'ocr_text'. Keep it clean and unformatted."
         if not ocr_text
-        else f"1. OCR: Pre-extracted local OCR text is provided: {ocr_text}. You can use or slightly augment/correct this text for 'ocr_text' rather than re-extracting everything from scratch."
+        else f"Pre-extracted local OCR text is provided: {ocr_text}. You can use or slightly augment/correct this text for 'ocr_text' rather than re-extracting everything from scratch."
     )
 
-    prompt = f"""
-Analyze this desktop screenshot (the first image is the focused foreground crop; the second is the full background desktop context, if provided).
-{mcp_context_block}
-Perform the following analytical indexing tasks:
-{ocr_instruction}
-2. Foreground Context: Describe precisely what application, document, URL, code, or workspace section is open, focusing on the focused crop. Be objective and fine-grained. Put this in 'active_window_description'.
-3. Peripheral Context: Describe peripheral, background, or accessory windows visible outside the focused area. Put this in 'full_desktop_description'.
-4. Project Classification: Map this activity to one of the active work projects from this guide:
-{projects_str}
-CRITICAL RULE: If there is no strong, direct, explicit link between screen contents and a project's guidelines, return "None". Be conservative. Put this in 'project_number'.
-5. Technical Tags: Generate 3 to 7 highly relevant, technical tags. Prioritize matching these existing database tags: [{tags_str}]. Put this in 'tags'.
-6. Synthesis (Caveman-Style): Synthesize everything into an ultra-dense, technical "Caveman-style" summary. Speak in fragments, use semicolons, and omit filler words (the, a, is, was, were, to, of, for). Put this in 'description'.
-   Example: "Dev aw-vision UI. Refactored list component; displaying unique elements via exact CSS tokens."
-7. Unique Artifacts: Identify specific terminal commands, active code blocks, file paths, specialized charts, or unique widgets present on the screen. Put this in 'unique_things'.
-
-You must respond in valid JSON format matching this exact schema:
-{{
-  "ocr_text": "string",
-  "active_window_description": "string",
-  "full_desktop_description": "string",
-  "project_number": "string",
-  "tags": ["string"],
-  "description": "string",
-  "unique_things": "string"
-}}
-"""
+    history = history_context or {}
+    prompt = render_prompt(
+        prompt_store.get("gemini_combined"),
+        {
+            "app_name": app_name or "Unknown",
+            "window_title": window_title or "Unknown",
+            "user_context_block": build_user_context_block(user_context),
+            "mcp_context_block": build_mcp_context_block(extra_context),
+            "skills_block": skills_context_for_slot("gemini_combined"),
+            "aw_context": history.get("aw_context", "None"),
+            "neighbor_context": history.get("neighbor_context", "- Not available."),
+            "similar_snapshots": history.get("similar_snapshots", "[]"),
+            "app_frequencies": history.get("app_frequencies", "  * Not available."),
+            "ocr_instruction": ocr_instruction,
+            "projects": projects_str,
+            "existing_tags": tags_str,
+        },
+    )
     contents_parts.append({"text": prompt})
 
     payload = {"contents": [{"parts": contents_parts}], "generationConfig": {"responseMimeType": "application/json"}}

@@ -8,7 +8,7 @@ fileignoreconfig:
 - filename: aw_vision/db.py
   checksum: 9e59ee68b5d6487f2cf345554e398a655c8087242236d14b46278d0eed73ba07
 - filename: AGENTS.md
-  checksum: 6519a7c007f975609f1021acef754918212050f78a4e5e8e58e77c50c999565b
+  checksum: ab4496348eed45f6c13ef3a269717aed7fe52f280a4e55d12586785191812211
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
@@ -49,4 +49,14 @@ fileignoreconfig:
   checksum: d6075f2b3bfbbbbef4db8187f215c0b65cbfeb2eed2bf2e6d4523646bc790274
 - filename: frontend/src/components/Sidebar.tsx
   checksum: b0a00955e388d7ce22c863b30ebed849de348e1b5d968e998ec3c3319d55bbbe
+- filename: frontend/src/components/PromptSettings.tsx
+  checksum: df501afaa720e44612ca63a323252759c84e67468aac10ef8442d1758a54d7d6
+- filename: aw_vision/skills.py
+  checksum: 14bd90fd1a86e4b04f47d21feee8a3340311e677edd9aae01e9ed656c14160c1
+- filename: aw_vision/prompts.py
+  checksum: 9f3f1a4104cea6c18d96235ccf8996c444b7c62031597a37b2b6bd460b20cb37
+- filename: frontend/src/components/SkillSettings.tsx
+  checksum: 193f57dae36105361dcd1c7f1491ed04ceb661c39012b990353beacbd122fb3d
+- filename: aw_vision/processor/history_context.py
+  checksum: fc34551c728b1ecd72ed01d217f2259f05eb54fa6a8976a0a288cc43f6426be9
 version: ""
