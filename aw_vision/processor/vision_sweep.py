@@ -121,6 +121,7 @@ class VisionSweepMixin:
 
                     client = ollama.Client(host=config.ollama_host)
 
+                    num_ctx = settings_store.get_int("ollama_context_size") or 8192
                     stage_keep_alive = 300
                     final_keep_alive = 0 if (idx == N - 1) else 300
 
@@ -168,7 +169,7 @@ class VisionSweepMixin:
                             model=config.vision_model,
                             messages=[{"role": "user", "content": prompt_v, "images": images_v}],
                             format="json",
-                            options={"temperature": 0.2, "num_ctx": 8192},
+                            options={"temperature": 0.2, "num_ctx": num_ctx},
                             keep_alive=stage_keep_alive,
                         )
                         parsed_v = json.loads(response_v.get("message", {}).get("content", "") or "{}")
@@ -231,7 +232,7 @@ class VisionSweepMixin:
                             model=config.vision_model,
                             messages=[{"role": "user", "content": prompt_syn}],
                             format="json",
-                            options={"temperature": 0.2, "num_ctx": 8192},
+                            options={"temperature": 0.2, "num_ctx": num_ctx},
                             keep_alive=final_keep_alive,
                         )
                         parsed_syn = json.loads(response_syn.get("message", {}).get("content", "") or "{}")

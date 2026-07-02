@@ -117,12 +117,14 @@ Raw Tool Output:
 """
 
     try:
+        from aw_vision.settings import settings_store
+
         url = f"{config.ollama_host}/api/generate"
         payload = {
             "model": config.vision_model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0.1, "num_ctx": 8192},
+            "options": {"temperature": 0.1, "num_ctx": settings_store.get_int("ollama_context_size") or 8192},
             "keep_alive": 0,
         }
         resp = requests.post(url, json=payload, timeout=25.0)
