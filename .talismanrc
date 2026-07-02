@@ -12,7 +12,7 @@ fileignoreconfig:
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
-  checksum: 3160da43f5b71659e7d976997f77bc3d8e51cde519a7f3fd69d7fb8952d6efac
+  checksum: 80fae8a2e160552689638e40183b66b21db17769342019a993908f0d34a6189e
 - filename: frontend/src/App.tsx
   checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
 - filename: frontend/src/components/ProjectsTab.tsx
@@ -46,7 +46,7 @@ fileignoreconfig:
 - filename: aw_vision/gemini/vision.py
   checksum: 4d76e009954759e94e99cd6c2d1892174369700e7f40a7bafd76d60c2b867db3
 - filename: aw_vision/processor/vision_sweep.py
-  checksum: d6075f2b3bfbbbbef4db8187f215c0b65cbfeb2eed2bf2e6d4523646bc790274
+  checksum: 31189c65c6c54b91c29faa668d59ca834a21c7f36edd4c31719b0fc38a70a224
 - filename: frontend/src/components/Sidebar.tsx
   checksum: b0a00955e388d7ce22c863b30ebed849de348e1b5d968e998ec3c3319d55bbbe
 - filename: frontend/src/components/PromptSettings.tsx

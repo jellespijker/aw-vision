@@ -585,6 +585,14 @@ export default function App() {
     setChatMessages([])
   }
 
+  const searchForPerson = (name: string) => {
+    // Jump to the gallery filtered to every moment involving this person.
+    setLightboxOpen(false)
+    setActiveTab('gallery')
+    setSearchQuery(name)
+    fetchHistory(1, name)
+  }
+
   const openImageLightbox = async (rec: HistoryRecord) => {
     setSelectedRecord(rec)
     setLightboxViewFull(false)
@@ -783,6 +791,7 @@ export default function App() {
           setExpandedOcrCardId={setExpandedOcrCardId}
           formatTimestamp={formatTimestamp}
           API_BASE={API_BASE}
+          searchForPerson={searchForPerson}
         />
 
         {/* Floating Google Photos-Style Timeline Scrollbar */}

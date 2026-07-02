@@ -60,6 +60,7 @@ export interface HistoryRecord {
   user_context?: string | null
   analysis_reasoning?: string | null
   classification_confidence?: 'direct' | 'thematic' | 'none' | null
+  people?: string[]
 }
 
 export interface Project {
