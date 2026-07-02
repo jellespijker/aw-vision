@@ -9,6 +9,7 @@ import ollama
 
 from aw_vision.config import config
 from aw_vision.db import db
+from aw_vision.processor.history_context import build_history_context
 from aw_vision.prompts import build_mcp_context_block, build_user_context_block, prompt_store, render_prompt
 from aw_vision.skills import skills_context_for_slot
 
@@ -83,6 +84,7 @@ class VisionSweepMixin:
                                 user_context=user_context or None,
                                 app_name=meta.get("app_name"),
                                 window_title=meta.get("window_title"),
+                                history_context=build_history_context(meta),
                             )
                             meta["ocr_text"] = res.get("ocr_text", "") or cached_ocr or ""
                             meta["description"] = res.get("description", "No description generated.")
@@ -104,55 +106,15 @@ class VisionSweepMixin:
                         except Exception as eg:
                             self.log_step(rec_id, f"Error calling Gemini, falling back to local Ollama: {eg}")
 
-                    aw_context_str = "None"
-                    bucket_context = meta.get("aw_bucket_context", {})
-                    if bucket_context:
-                        aw_context_str = json.dumps(bucket_context, indent=2, ensure_ascii=False)
-
                     existing_tags = db.get_all_unique_tags()
                     if len(existing_tags) > 100:
                         existing_tags = existing_tags[:100]
 
                     projects_str = json.dumps(projects, indent=2, ensure_ascii=False)
 
-                    # Fetch temporal neighbor context and app statistics
-                    timestamp = float(meta.get("timestamp", time.time()))
-                    past_neighbor = db.get_past_neighbor(timestamp)
-                    future_neighbor = db.get_future_neighbor(timestamp)
-
-                    neighbor_context_str = ""
-                    if past_neighbor:
-                        p_proj = past_neighbor.get("project_number") or "None"
-                        p_human = "Yes (Verified)" if past_neighbor.get("human_labeled") else "No (Auto-classified)"
-                        neighbor_context_str += f"""- PRECEDING SNAPSHOT (Past Neighbor):
-  * Application: {past_neighbor.get('app_name', 'Unknown')}
-  * Window Title: {past_neighbor.get('window_title', 'Unknown')}
-  * Description: {past_neighbor.get('description', 'No description')}
-  * Project Assigned: {p_proj}
-  * Label Is Verified by Human: {p_human}
-"""
-                    if future_neighbor:
-                        f_proj = future_neighbor.get("project_number") or "None"
-                        f_human = "Yes (Verified)" if future_neighbor.get("human_labeled") else "No (Auto-classified)"
-                        neighbor_context_str += f"""- SUCCEEDING SNAPSHOT (Future Neighbor):
-  * Application: {future_neighbor.get('app_name', 'Unknown')}
-  * Window Title: {future_neighbor.get('window_title', 'Unknown')}
-  * Description: {future_neighbor.get('description', 'No description')}
-  * Project Assigned: {f_proj}
-  * Label Is Verified by Human: {f_human}
-"""
-                    if not neighbor_context_str:
-                        neighbor_context_str = "- No chronological neighbor snapshots are currently available."
-
-                    app_name = meta.get("app_name", "Unknown")
-                    app_freqs = db.get_app_project_frequencies(app_name)
-                    app_freq_str = ""
-                    if app_freqs:
-                        app_freq_str = "\n".join(
-                            [f"  * Project {proj}: score {freq:.1f}" for proj, freq in app_freqs.items()]
-                        )
-                    else:
-                        app_freq_str = f"  * No historical project associations for '{app_name}'."
+                    # Historical/temporal context from previously processed snapshots
+                    # (shared with the Gemini combined prompt via history_context).
+                    history = build_history_context(meta)
 
                     raw_ocr = meta.get("ocr_text", "")
                     truncated_ocr = self.summarize_ocr_text(raw_ocr, max_chars=1200)
@@ -196,6 +158,7 @@ class VisionSweepMixin:
                                 ),
                                 "app_name": meta.get("app_name") or "Unknown",
                                 "window_title": meta.get("window_title") or "Unknown",
+                                "previous_snapshot_block": history.get("previous_snapshot_block", ""),
                                 "user_context_block": build_user_context_block(user_context),
                                 "mcp_context_block": build_mcp_context_block(mcp_ctx_vision),
                                 "skills_block": skills_context_for_slot("local_vision"),
@@ -236,12 +199,6 @@ class VisionSweepMixin:
                             "Vision pass 2/2: Classifying project, generating tags & synthesizing description...",
                         )
 
-                        # Query historically similar snapshots using metadata overlap instead of vector embeddings to prevent model swapping
-                        similar_snapshots = db.get_similar_labeled_snapshots_by_metadata(
-                            app_name=meta.get("app_name"), window_title=meta.get("window_title"), limit=5
-                        )
-                        similar_snapshots_str = json.dumps(similar_snapshots, ensure_ascii=False)
-
                         # Optional external MCP context (GitHub/Jira/etc.) for classification.
                         mcp_query_syn = (
                             f"{meta.get('app_name', '')} {meta.get('window_title', '')} {truncated_ocr[:200]}".strip()
@@ -260,10 +217,10 @@ class VisionSweepMixin:
                                 "full_desktop_description": full_desktop_description,
                                 "unique_things": unique_things,
                                 "ocr_text": truncated_ocr,
-                                "aw_context": aw_context_str,
-                                "neighbor_context": neighbor_context_str,
-                                "similar_snapshots": similar_snapshots_str,
-                                "app_frequencies": app_freq_str,
+                                "aw_context": history.get("aw_context", "None"),
+                                "neighbor_context": history.get("neighbor_context", "- Not available."),
+                                "similar_snapshots": history.get("similar_snapshots", "[]"),
+                                "app_frequencies": history.get("app_frequencies", "  * Not available."),
                                 "mcp_context_block": build_mcp_context_block(mcp_ctx_syn),
                                 "skills_block": skills_context_for_slot("local_synthesis"),
                                 "projects": projects_str,

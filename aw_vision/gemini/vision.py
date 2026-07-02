@@ -87,6 +87,7 @@ def run_gemini_combined_ocr_vision(
     user_context: Optional[str] = None,
     app_name: Optional[str] = None,
     window_title: Optional[str] = None,
+    history_context: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Perform screenshot OCR and Vision Analysis simultaneously in a single, high-efficiency Gemini multimodal API call."""
     key = settings_store.get("gemini_api_key")
@@ -121,6 +122,7 @@ def run_gemini_combined_ocr_vision(
         else f"Pre-extracted local OCR text is provided: {ocr_text}. You can use or slightly augment/correct this text for 'ocr_text' rather than re-extracting everything from scratch."
     )
 
+    history = history_context or {}
     prompt = render_prompt(
         prompt_store.get("gemini_combined"),
         {
@@ -129,6 +131,10 @@ def run_gemini_combined_ocr_vision(
             "user_context_block": build_user_context_block(user_context),
             "mcp_context_block": build_mcp_context_block(extra_context),
             "skills_block": skills_context_for_slot("gemini_combined"),
+            "aw_context": history.get("aw_context", "None"),
+            "neighbor_context": history.get("neighbor_context", "- Not available."),
+            "similar_snapshots": history.get("similar_snapshots", "[]"),
+            "app_frequencies": history.get("app_frequencies", "  * Not available."),
             "ocr_instruction": ocr_instruction,
             "projects": projects_str,
             "existing_tags": tags_str,

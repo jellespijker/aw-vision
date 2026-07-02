@@ -8,7 +8,7 @@ fileignoreconfig:
 - filename: aw_vision/db.py
   checksum: 9e59ee68b5d6487f2cf345554e398a655c8087242236d14b46278d0eed73ba07
 - filename: AGENTS.md
-  checksum: dcec782c41448dfb16916610942b640010ae9aa8cb58648884ad8dabc7a116ff
+  checksum: ab4496348eed45f6c13ef3a269717aed7fe52f280a4e55d12586785191812211
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
@@ -57,4 +57,6 @@ fileignoreconfig:
   checksum: 9f3f1a4104cea6c18d96235ccf8996c444b7c62031597a37b2b6bd460b20cb37
 - filename: frontend/src/components/SkillSettings.tsx
   checksum: 193f57dae36105361dcd1c7f1491ed04ceb661c39012b990353beacbd122fb3d
+- filename: aw_vision/processor/history_context.py
+  checksum: fc34551c728b1ecd72ed01d217f2259f05eb54fa6a8976a0a288cc43f6426be9
 version: ""

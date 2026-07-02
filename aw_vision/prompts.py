@@ -66,6 +66,12 @@ OS window metadata for this capture: application "{app_name}", window title "{wi
     + GROUNDING_RULES
     + """
 
+HISTORICAL & TEMPORAL CONTEXT (previously processed snapshots from the local database; use it to disambiguate ambiguous screens and keep classification, terminology and tags consistent over time — it is supporting evidence, the pixels remain primary):
+- ActivityWatch Bucket State: {aw_context}
+- Neighboring Snapshots: {neighbor_context}
+- Historically Similar Snapshots: {similar_snapshots}
+- App project statistics: {app_frequencies}
+
 Perform the following tasks:
 1. OCR ('ocr_text'): {ocr_instruction}
 2. Foreground analysis ('active_window_description'): Describe precisely what application, document, URL, code, or workspace section the focused crop shows. Lead with the concrete subject (file, ticket, page, conversation), then the action in progress (editing, reviewing, debugging, reading, composing).
@@ -74,7 +80,8 @@ Perform the following tasks:
 5. Classification reasoning ('project_reasoning'): Reason step by step IN THIS FIELD before deciding on a project. Keep it terse — evidence fragments, not prose, under ~120 words:
    a. List the strongest pieces of evidence (identifiers, paths, ticket prefixes, repository names, the window metadata, user-provided context).
    b. Name the matching catalog candidates and the ruled-out near-misses, each with its deciding evidence.
-   c. Conclude whether the best match is DIRECT (explicit identifier/description overlap) or merely THEMATIC. Only a direct match justifies classification.
+   c. Weigh continuity: neighboring and human-verified snapshots on the same application forming a continuous block of activity are strong evidence.
+   d. Conclude whether the best match is DIRECT (explicit identifier/description overlap) or merely THEMATIC. Only a direct match justifies classification.
 6. Project classification ('project_number'): Based ONLY on your reasoning above, output the single best catalog project number, or "None" when the evidence is thematic, indirect, or ambiguous. Do NOT match on inactive sidebar chats, adjacent tab names, browser bookmarks, or company names alone. Stay consistent with the user-provided context note when present.
 7. Technical tags ('tags'): Generate 3 to 7 highly relevant, technical tags. Reuse these existing database tags VERBATIM when they apply: [{existing_tags}]. New tags must be short technical noun phrases (1-3 words); never emit near-synonyms of an existing tag.
 8. Synthesis ('description'): One ultra-dense, technical "Caveman-style" summary of at most ~50 words. Speak in fragments, use semicolons, omit filler words (the, a, is, was, were, to, of, for). Every concrete identifier from the evidence (files, functions, tickets, URLs) must survive into it verbatim.
@@ -102,7 +109,7 @@ _LOCAL_VISION_DEFAULT = (
 
 OS window metadata for this capture: application "{app_name}", window title "{window_title}". Use it to anchor your analysis, but trust the pixels when they disagree.
 
-{user_context_block}{mcp_context_block}{skills_block}"""
+{previous_snapshot_block}{user_context_block}{mcp_context_block}{skills_block}"""
     + GROUNDING_RULES
     + """
 
@@ -171,6 +178,10 @@ PROMPT_DEFS: List[Dict[str, Any]] = [
             "user_context_block",
             "mcp_context_block",
             "skills_block",
+            "aw_context",
+            "neighbor_context",
+            "similar_snapshots",
+            "app_frequencies",
             "ocr_instruction",
             "projects",
             "existing_tags",
@@ -186,6 +197,7 @@ PROMPT_DEFS: List[Dict[str, Any]] = [
             "image_layout_note",
             "app_name",
             "window_title",
+            "previous_snapshot_block",
             "user_context_block",
             "mcp_context_block",
             "skills_block",
