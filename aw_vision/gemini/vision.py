@@ -88,6 +88,7 @@ def run_gemini_combined_ocr_vision(
     app_name: Optional[str] = None,
     window_title: Optional[str] = None,
     history_context: Optional[Dict[str, str]] = None,
+    template_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Perform screenshot OCR and Vision Analysis simultaneously in a single, high-efficiency Gemini multimodal API call."""
     key = settings_store.get("gemini_api_key")
@@ -124,7 +125,7 @@ def run_gemini_combined_ocr_vision(
 
     history = history_context or {}
     prompt = render_prompt(
-        prompt_store.get("gemini_combined"),
+        template_override or prompt_store.get("gemini_combined"),
         {
             "app_name": app_name or "Unknown",
             "window_title": window_title or "Unknown",
