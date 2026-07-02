@@ -24,7 +24,7 @@ fileignoreconfig:
 - filename: frontend/src/components/GalleryTab.tsx
   checksum: 76e79bb0c1d30be10d3a750690b71e6a95bcd11ea1b283d9c8ffefc0198cb9c6
 - filename: frontend/src/components/AgentTab.tsx
-  checksum: f243d48d5f9d3179006fcf759da0547ba732b9da433d3f4be250c65d382f4d74
+  checksum: 3108890aa29cbfd717969be75d3baa59a2d37d57e9246fd717a7fa4ec9c8947a
 - filename: aw_vision/agent.py
   checksum: 4d9d9bf55ce213b5331e7d545d1827c3ae1544de9a7ab3e8e4a090c556156e62
 - filename: frontend/package-lock.json

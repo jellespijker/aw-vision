@@ -251,7 +251,7 @@ def post_query(request: QueryRequest):
 
     try:
         # Run state graph
-        inputs = {"messages": messages}
+        inputs = {"messages": messages, "tool_events": []}
         output = agent_app.invoke(inputs)
 
         # Extract last assistant message
@@ -260,6 +260,7 @@ def post_query(request: QueryRequest):
             last_msg = final_messages[-1]
             return {
                 "response": last_msg.content,
+                "tool_events": output.get("tool_events", []),
                 "history": [
                     {
                         "role": "user" if isinstance(m, HumanMessage) else "assistant",

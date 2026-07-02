@@ -563,7 +563,10 @@ export default function App() {
         history: chatMessages
       })
       if (resp.status === 200) {
-        setChatMessages([...updatedHistory, { role: 'assistant', content: resp.data.response }])
+        setChatMessages([
+          ...updatedHistory,
+          { role: 'assistant', content: resp.data.response, tool_events: resp.data.tool_events || [] }
+        ])
       }
     } catch (e: any) {
       setChatMessages([

@@ -334,61 +334,35 @@ TOOLS = {
 
 
 # ---------------------------------------------------------
-# Dynamic MCP tools (assigned to the "agent" slot)
+# Unified tool registry (builtins + MCP tools on the "agent" slot)
 # ---------------------------------------------------------
 
 
-def build_mcp_agent_tools() -> dict:
-    """Discover MCP tools assigned to the Ask Memory Agent slot.
+def _wrap_builtin(name: str, fn):
+    from aw_vision.tooling import ToolSpec
 
-    Returns a mapping of LLM-friendly tool name -> descriptor dict. Connection or
-    discovery failures degrade gracefully to an empty mapping so the agent keeps
-    working with its built-in tools.
+    def run(arg: str) -> str:
+        if not arg or arg.strip().lower() == "none":
+            return fn()
+        return fn(arg)
+
+    return ToolSpec(name=name, description=(fn.__doc__ or "").strip(), run=run, source="builtin")
+
+
+def build_agent_toolspecs() -> dict:
+    """The full uniform tool registry for the Ask Memory Agent.
+
+    Builtins and slot-assigned MCP tools are wrapped identically (ToolSpec) so
+    the parse/dispatch/observe path is shared with every other ReAct agent in
+    the system. Discovery failures degrade to builtins only.
     """
-    try:
-        from aw_vision.mcp_manager import mcp_manager
+    from aw_vision.tooling import mcp_tools_for_slot
 
-        pairs = mcp_manager.tools_for_slot("agent")
-    except Exception as e:
-        print(f"[Memory Agent] Failed to load MCP tools: {e}")
-        return {}
+    specs = {name: _wrap_builtin(name, fn) for name, fn in TOOLS.items()}
+    for spec in mcp_tools_for_slot("agent"):
+        specs.setdefault(spec.name, spec)
+    return specs
 
-    tools: dict = {}
-    for cfg, tool in pairs:
-        base = re.sub(r"[^a-zA-Z0-9_]", "_", tool.get("name", "tool")).strip("_").lower() or "tool"
-        name = f"mcp_{base}"
-        if name in tools:
-            # Disambiguate collisions across servers by prefixing the server name.
-            server_slug = re.sub(r"[^a-zA-Z0-9_]", "_", cfg.get("name", "srv")).strip("_").lower()
-            name = f"mcp_{server_slug}_{base}"
-        tools[name] = {
-            "server_id": cfg["id"],
-            "server_name": cfg.get("name", "MCP Server"),
-            "tool_name": tool.get("name"),
-            "schema": tool.get("input_schema") or {},
-            "description": (tool.get("description") or "").strip(),
-        }
-    return tools
-
-
-def _execute_mcp_tool(descriptor: dict, raw_arg: str) -> str:
-    """Translate the agent's single-string argument into MCP tool arguments and call it."""
-    from aw_vision.mcp_manager import mcp_manager
-
-    arguments: dict = {}
-    raw = (raw_arg or "").strip()
-    if raw and raw.lower() != "none":
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                arguments = parsed
-            else:
-                arguments = mcp_manager._build_query_args({"input_schema": descriptor["schema"]}, str(parsed))
-        except (json.JSONDecodeError, ValueError):
-            # Not JSON: treat the whole string as a free-text query argument.
-            arguments = mcp_manager._build_query_args({"input_schema": descriptor["schema"]}, raw)
-
-    return mcp_manager.call_tool(descriptor["server_id"], descriptor["tool_name"], arguments)
 
 # ---------------------------------------------------------
 # LangGraph ReAct Agent State Machine
@@ -398,6 +372,7 @@ def _execute_mcp_tool(descriptor: dict, raw_arg: str) -> str:
 class AgentState(TypedDict):
     messages: Sequence[BaseMessage]
     next_node: str
+    tool_events: list
 
 
 def clean_final_response(text: str) -> str:
@@ -480,15 +455,17 @@ def run_agent_node(state: AgentState) -> AgentState:
         "- query_jira(jql): Search Jira issues.",
     ]
 
-    # Append any MCP tools the user assigned to the Ask Memory Agent.
-    mcp_agent_tools = build_mcp_agent_tools()
-    if mcp_agent_tools:
+    # Append any MCP tools the user assigned to the Ask Memory Agent (uniform registry).
+    from aw_vision.tooling import mcp_tools_for_slot
+
+    mcp_specs = mcp_tools_for_slot("agent")
+    if mcp_specs:
         prompt_lines.append("Additionally, these external MCP tools are available (call them exactly as named):")
-        for tname, desc in mcp_agent_tools.items():
-            summary = desc["description"] or "External MCP tool."
+        for spec in mcp_specs:
+            summary = spec.description or "External MCP tool."
             if len(summary) > 160:
                 summary = summary[:160] + "..."
-            prompt_lines.append(f"- {tname}(input): [{desc['server_name']}] {summary}")
+            prompt_lines.append(f"- {spec.name}(input): [{spec.extra.get('server_name', 'MCP')}] {summary}")
         prompt_lines.append(
             "  For MCP tools, the argument after the comma may be a plain search string OR a compact JSON object "
             "of arguments (e.g. CALL_TOOL: mcp_search_issues, {\"jql\": \"project = ABC\"})."
@@ -646,43 +623,25 @@ def run_agent_node(state: AgentState) -> AgentState:
 
 
 def run_tools_node(state: AgentState) -> AgentState:
-    """Execute the tool requested by the agent."""
+    """Execute the tool requested by the agent through the unified registry."""
+    from aw_vision.tooling import execute_tool, parse_tool_call
+
     messages = state["messages"]
+    tool_events = list(state.get("tool_events") or [])
     last_message = messages[-1].content
 
-    match = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", last_message)
-    if not match:
+    call = parse_tool_call(last_message)
+    if not call:
         # Fallback
         return {
             "messages": messages + [HumanMessage(content="Tool execution error: Invalid format.")],
             "next_node": "agent",
         }
 
-    tool_name = match.group(1).strip()
-    tool_arg = match.group(2).strip()
-
-    # Execute the matching tool
-    if tool_name in TOOLS:
-        print(f"Executing Agent Tool: {tool_name} with arg '{tool_arg}'")
-        try:
-            # Special case for None args
-            if tool_arg.lower() == "none" or not tool_arg:
-                result = TOOLS[tool_name]()
-            else:
-                result = TOOLS[tool_name](tool_arg)
-        except Exception as e:
-            result = f"Error executing tool: {e}"
-    else:
-        # Fall back to dynamically-discovered MCP tools assigned to the agent.
-        mcp_agent_tools = build_mcp_agent_tools()
-        if tool_name in mcp_agent_tools:
-            print(f"Executing MCP Agent Tool: {tool_name} with arg '{tool_arg}'")
-            try:
-                result = _execute_mcp_tool(mcp_agent_tools[tool_name], tool_arg)
-            except Exception as e:
-                result = f"Error executing MCP tool: {e}"
-        else:
-            result = f"Tool '{tool_name}' is not registered."
+    tool_name, tool_arg = call
+    print(f"Executing Agent Tool: {tool_name} with arg '{tool_arg}'")
+    event = execute_tool(build_agent_toolspecs(), tool_name, tool_arg)
+    result = event.pop("result")
 
     if len(result) > 3000:
         print(f"Tool output length ({len(result)}) exceeds threshold. Summarizing...")
@@ -692,10 +651,12 @@ def run_tools_node(state: AgentState) -> AgentState:
         else:
             result = summary
 
+    tool_events.append(event)
     formatted_result = f"=== TOOL RESULT ({tool_name}) ===\n{result}"
     return {
         "messages": messages + [HumanMessage(content=formatted_result)],
         "next_node": "agent",
+        "tool_events": tool_events,
     }
 
 

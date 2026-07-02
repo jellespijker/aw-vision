@@ -211,6 +211,7 @@ class PromptEvaluator:
                 "app_frequencies": history.get("app_frequencies", "  * Not available."),
                 "mcp_context_block": "",
                 "skills_block": skills_context_for_slot("local_synthesis"),
+                "tools_block": "",
                 "projects": json.dumps(projects, indent=2, ensure_ascii=False),
                 "existing_tags": "[]",
             },

@@ -27,9 +27,19 @@ export interface DaemonStatus {
   agent_model?: string
 }
 
+export interface ToolEvent {
+  tool: string
+  args: string
+  source: 'builtin' | 'mcp'
+  result_preview: string
+  duration_seconds?: number
+  error?: boolean
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  tool_events?: ToolEvent[]
 }
 
 export interface HistoryRecord {

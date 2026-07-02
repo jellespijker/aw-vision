@@ -91,7 +91,7 @@ Perform the following tasks:
 Project Reference Catalog:
 {projects}
 
-You must respond in valid JSON format matching this exact schema (keep the key order — reasoning comes before the decision):
+{tools_block}You must respond in valid JSON format matching this exact schema (keep the key order — reasoning comes before the decision):
 {
   "ocr_text": "string",
   "active_window_description": "string",
@@ -140,7 +140,7 @@ _LOCAL_SYNTHESIS_DEFAULT = """You are indexing a desktop snapshot for a searchab
 Project Reference Catalog:
 {projects}
 
-Produce exactly five outputs, in this order:
+{tools_block}Produce exactly five outputs, in this order:
 1. project_reasoning: Reason step by step BEFORE deciding. Keep it terse — evidence fragments, not prose, under ~120 words:
    a. List the strongest pieces of evidence (identifiers, file paths, ticket prefixes, repository names, the window title, the user-provided context note when present).
    b. Name the matching catalog candidates and the ruled-out near-misses, each with its deciding evidence.
@@ -186,6 +186,7 @@ PROMPT_DEFS: List[Dict[str, Any]] = [
             "neighbor_context",
             "similar_snapshots",
             "app_frequencies",
+            "tools_block",
             "ocr_instruction",
             "projects",
             "existing_tags",
@@ -227,6 +228,7 @@ PROMPT_DEFS: List[Dict[str, Any]] = [
             "app_frequencies",
             "mcp_context_block",
             "skills_block",
+            "tools_block",
             "projects",
             "existing_tags",
         ],
