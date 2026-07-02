@@ -189,6 +189,7 @@ class BatchMixin:
                         "project_number": meta.get("project_number"),
                         "tags": tags,
                         "ocr_text": ocr_text,
+                        "user_context": meta.get("user_context"),
                     })
                     keep_alive = 0 if (idx == N - 1) else 300
                     # Pass the focused screenshot; get_embedding only forwards it to
@@ -224,6 +225,8 @@ class BatchMixin:
                     "project_number": project_number,
                     "human_labeled": False,
                     "unique_things": meta.get("unique_things"),
+                    "user_context": meta.get("user_context"),
+                    "analysis_reasoning": meta.get("analysis_reasoning"),
                     "vector": embedding,
                     "duration_ocr": meta.get("duration_ocr"),
                     "duration_vision": meta.get("duration_vision"),

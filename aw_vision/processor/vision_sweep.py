@@ -9,6 +9,8 @@ import ollama
 
 from aw_vision.config import config
 from aw_vision.db import db
+from aw_vision.prompts import build_mcp_context_block, build_user_context_block, prompt_store, render_prompt
+from aw_vision.skills import skills_context_for_slot
 
 
 def mcp_enrich(slot: str, query: str) -> str:
@@ -67,6 +69,9 @@ class VisionSweepMixin:
                         mcp_ctx_combined = mcp_enrich("gemini_combined", mcp_query)
                         if mcp_ctx_combined:
                             self.log_step(rec_id, "Injected external MCP context into Gemini combined prompt.")
+                        user_context = (meta.get("user_context") or "").strip()
+                        if user_context:
+                            self.log_step(rec_id, "Injected user-provided context note into Gemini combined prompt.")
                         try:
                             res = run_gemini_combined_ocr_vision(
                                 img_path=img_path,
@@ -75,12 +80,14 @@ class VisionSweepMixin:
                                 existing_tags=existing_tags,
                                 ocr_text=cached_ocr if cached_ocr else None,
                                 extra_context=mcp_ctx_combined or None,
+                                user_context=user_context or None,
                             )
                             meta["ocr_text"] = res.get("ocr_text", "") or cached_ocr or ""
                             meta["description"] = res.get("description", "No description generated.")
                             meta["tags"] = res.get("tags", [])
                             meta["project_number"] = res.get("project_number", "None")
                             meta["unique_things"] = res.get("unique_things", "None detected.")
+                            meta["analysis_reasoning"] = (res.get("project_reasoning") or "").strip() or None
                             meta["vector"] = []  # Generated in Phase 3
                             meta["duration_vision"] = time.time() - vision_start
 
@@ -167,11 +174,9 @@ class VisionSweepMixin:
                     mcp_ctx_vision = mcp_enrich(
                         "local_vision", f"{meta.get('app_name', '')} {meta.get('window_title', '')}".strip()
                     )
-                    mcp_block_vision = (
-                        f"Supplementary external MCP context (for reference only):\n{mcp_ctx_vision}\n\n"
-                        if mcp_ctx_vision
-                        else ""
-                    )
+                    user_context = (meta.get("user_context") or "").strip()
+                    if user_context:
+                        self.log_step(rec_id, "Injected user-provided context note into local pipeline prompts.")
                     try:
                         self.log_step(
                             rec_id, "Vision pass 1/2: Analyzing focused window, desktop context & unique artifacts..."
@@ -179,23 +184,18 @@ class VisionSweepMixin:
                         images_v = [str(img_path)]
                         if has_full:
                             images_v.append(str(full_img_path))
-                        prompt_v = (
-                            "Analyze the attached desktop screenshot(s). "
-                            + (
-                                "The FIRST image is the focused foreground window; the SECOND is the full background desktop context. "
-                                if has_full
-                                else "The image is the focused foreground window. "
-                            )
-                            + "Be highly objective, granular, and precise. Specify filenames, code functions, browser URLs, "
-                            "searched keywords, active spreadsheet columns, or chat messages. Do not add conversational filler "
-                            "or generic assumptions.\n\n"
-                            + mcp_block_vision
-                            + "You must respond in valid JSON format matching this schema:\n"
-                            "{\n"
-                            '  "active_window_description": "what the focused foreground window/document/workspace shows",\n'
-                            '  "full_desktop_description": "peripheral/background windows, sidebars or layout OUTSIDE the focus (keep brief if none)",\n'
-                            '  "unique_things": "specific terminal commands, active code blocks, file paths, specialized widgets or tools present"\n'
-                            "}"
+                        prompt_v = render_prompt(
+                            prompt_store.get("local_vision"),
+                            {
+                                "image_layout_note": (
+                                    "The FIRST image is the focused foreground window; the SECOND is the full background desktop context."
+                                    if has_full
+                                    else "The image is the focused foreground window."
+                                ),
+                                "user_context_block": build_user_context_block(user_context),
+                                "mcp_context_block": build_mcp_context_block(mcp_ctx_vision),
+                                "skills_block": skills_context_for_slot("local_vision"),
+                            },
                         )
                         response_v = client.chat(
                             model=config.vision_model,
@@ -225,6 +225,7 @@ class VisionSweepMixin:
                     project_number = "None"
                     tags = []
                     description = "No description generated."
+                    analysis_reasoning = None
                     try:
                         self.log_step(
                             rec_id,
@@ -244,35 +245,25 @@ class VisionSweepMixin:
                         mcp_ctx_syn = mcp_enrich("local_synthesis", mcp_query_syn)
                         if mcp_ctx_syn:
                             self.log_step(rec_id, "Injected external MCP context into local synthesis prompt.")
-                        mcp_block_syn = f"\n- External MCP Tool Context:\n{mcp_ctx_syn}" if mcp_ctx_syn else ""
 
-                        prompt_syn = f"""
-You are indexing a desktop snapshot. Use only the evidence below.
-- Active Window: {active_window_description}
-- Desktop Context: {full_desktop_description}
-- Unique Artifacts: {unique_things}
-- Extracted Screen Text (OCR): {truncated_ocr}
-- ActivityWatch Bucket State: {aw_context_str}
-- Neighboring Snapshots: {neighbor_context_str}
-- Historically Similar Snapshots: {similar_snapshots_str}
-- App project statistics: {app_freq_str}{mcp_block_syn}
-
-Project Reference Catalog:
-{projects_str}
-
-Produce exactly three outputs:
-1. project_number: classify this activity into ONE catalog project. Be extremely conservative: if there is no strong, explicit, and direct evidence correlating the active screen contents to a project's description/entailment, output "None". Do NOT match on inactive sidebar chats, adjacent tab names, browser bookmarks, or external company profiles. Stay consistent with neighbor and human-labeled snapshots when they form a continuous block of activity on the same application.
-2. tags: 3 to 7 highly relevant, technical tags/keywords for this task. Prioritize reusing these existing database tags for consistency: {existing_tags}
-3. description: an ultra-dense, highly precise "Caveman-style" work summary. Omit filler words (the, a, is, was, were, to, of, for); use dense technical fragments separated by semicolons/periods. Every word must carry maximum technical information.
-   Example: "Dev aw-vision UI. Refactored list component; displaying unique elements via exact CSS tokens."
-
-You must respond in valid JSON format matching this exact schema:
-{{
-  "project_number": "string (catalog project number, or \\"None\\")",
-  "tags": ["string"],
-  "description": "string"
-}}
-"""
+                        prompt_syn = render_prompt(
+                            prompt_store.get("local_synthesis"),
+                            {
+                                "user_context_block": build_user_context_block(user_context),
+                                "active_window_description": active_window_description,
+                                "full_desktop_description": full_desktop_description,
+                                "unique_things": unique_things,
+                                "ocr_text": truncated_ocr,
+                                "aw_context": aw_context_str,
+                                "neighbor_context": neighbor_context_str,
+                                "similar_snapshots": similar_snapshots_str,
+                                "app_frequencies": app_freq_str,
+                                "mcp_context_block": build_mcp_context_block(mcp_ctx_syn),
+                                "skills_block": skills_context_for_slot("local_synthesis"),
+                                "projects": projects_str,
+                                "existing_tags": existing_tags,
+                            },
+                        )
                         response_syn = client.chat(
                             model=config.vision_model,
                             messages=[{"role": "user", "content": prompt_syn}],
@@ -285,10 +276,13 @@ You must respond in valid JSON format matching this exact schema:
                         syn_tags = parsed_syn.get("tags", [])
                         tags = syn_tags if isinstance(syn_tags, list) else []
                         description = (parsed_syn.get("description") or "").strip() or description
+                        analysis_reasoning = (parsed_syn.get("project_reasoning") or "").strip() or None
                         self.log_step(
                             rec_id,
                             f"Synthesis complete: Project='{project_number}', Tags={tags}, Desc={description[:120]}...",
                         )
+                        if analysis_reasoning:
+                            self.log_step(rec_id, f"Classification reasoning: {analysis_reasoning[:300]}")
                     except Exception as esyn:
                         self.log_step(rec_id, f"Warning: Synthesis pass failed: {esyn}")
 
@@ -297,6 +291,7 @@ You must respond in valid JSON format matching this exact schema:
                     meta["tags"] = tags
                     meta["project_number"] = project_number
                     meta["unique_things"] = unique_things
+                    meta["analysis_reasoning"] = analysis_reasoning
                     meta["duration_vision"] = time.time() - vision_start
 
                     # Persist results to metadata JSON file on disk

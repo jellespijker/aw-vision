@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from aw_vision.agent import AIMessage, HumanMessage, agent_app
 from aw_vision.config import config
+from aw_vision.customization_api import router as customization_router
 from aw_vision.db import db
 from aw_vision.processor import processor
 from aw_vision.watcher import watcher
@@ -20,6 +21,9 @@ app = FastAPI(
     title="aw-vision API",
     description="Backend services for visual and semantic desktop tracking.",
 )
+
+# Pipeline customization routes (editable prompts + Claude Skills)
+app.include_router(customization_router)
 
 # CORS configuration
 app.add_middleware(
@@ -131,6 +135,10 @@ class MCPServerModel(BaseModel):
 
 class MCPTestRequest(BaseModel):
     server: MCPServerModel
+
+
+class UserContextRequest(BaseModel):
+    user_context: Optional[str] = None
 
 
 # ---------------------------------------------------------
@@ -613,6 +621,8 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
                         "human_labeled": False,
                         "is_processed": False,
                         "unique_things": None,
+                        "user_context": meta.get("user_context"),
+                        "analysis_reasoning": None,
                     })
                 except Exception as e:
                     print(f"Error reading pending metadata {meta_path}: {e}")
@@ -651,6 +661,8 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
                 "is_processed": True,
                 "distance": r.get("_distance"),  # Only present on semantic searches
                 "unique_things": r.get("unique_things"),
+                "user_context": r.get("user_context"),
+                "analysis_reasoning": r.get("analysis_reasoning"),
             })
 
         # 3. Filter pending if searching (simple case-insensitive substring match)
@@ -788,6 +800,8 @@ def process_single_screenshot(file_id: str):
             "is_processed": True,
             "logs": processor.processing_logs.get(file_id, []),
             "unique_things": record.get("unique_things"),
+            "user_context": record.get("user_context"),
+            "analysis_reasoning": record.get("analysis_reasoning"),
         }
     except HTTPException:
         raise
@@ -842,6 +856,49 @@ def update_snapshot_label(record_id: str, payload: LabelRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to update project label: {e}")
+
+
+@app.post("/api/snapshots/{record_id}/context")
+def update_snapshot_user_context(record_id: str, payload: UserContextRequest):
+    """Save the user's own free-text context note describing what was actually being worked on."""
+    import json
+
+    try:
+        text = (payload.user_context or "").strip() or None
+
+        updated_db = False
+        record = db.get_record_by_id(record_id)
+        if record:
+            db.update_user_context(record_id, text)
+            updated_db = True
+
+        # Also patch the pending raw metadata JSON (if present) so the note reaches
+        # the analysis prompts when the screenshot is (re)processed.
+        updated_pending = False
+        raw_dir = config.screenshots_dir / "raw"
+        for p in raw_dir.glob("*.json"):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                if meta.get("id") == record_id:
+                    meta["user_context"] = text
+                    with open(p, "w", encoding="utf-8") as f:
+                        json.dump(meta, f, indent=2)
+                    updated_pending = True
+                    break
+            except Exception:
+                continue
+
+        if not updated_db and not updated_pending:
+            raise HTTPException(status_code=404, detail="Snapshot not found in database or pending queue.")
+
+        return {"status": "success", "user_context": text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to save user context: {e}")
 
 
 @app.get("/api/process/{file_id}/logs")
@@ -971,6 +1028,8 @@ def reprocess_snapshots(payload: ReprocessRequest):
                     "window_title": r.get("window_title", "Unknown"),
                     "app_name": r.get("app_name", "Unknown"),
                     "is_afk": bool(r.get("is_afk", False)),
+                    # Preserve the user's own context note so it steers the re-analysis
+                    "user_context": r.get("user_context"),
                 }
 
                 # Handle OCR bypass

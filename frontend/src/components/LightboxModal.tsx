@@ -1,5 +1,6 @@
-import React from 'react'
-import { X, Archive, User, FileText, RefreshCw, Cpu, Sparkles } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import axios from 'axios'
+import { X, Archive, User, FileText, RefreshCw, Cpu, Sparkles, NotebookPen, Loader2, Brain, ChevronDown, ChevronRight } from 'lucide-react'
 import type { HistoryRecord, Project } from '../types'
 
 interface LightboxModalProps {
@@ -39,10 +40,44 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   formatTimestamp,
   API_BASE
 }) => {
+  // Per-screenshot user context note (collapsible editor)
+  const [contextOpen, setContextOpen] = useState<boolean>(false)
+  const [contextDraft, setContextDraft] = useState<string>('')
+  const [savingContext, setSavingContext] = useState<boolean>(false)
+  const [contextStatus, setContextStatus] = useState<'idle' | 'saved' | 'error'>('idle')
+  const [reasoningOpen, setReasoningOpen] = useState<boolean>(false)
+
+  useEffect(() => {
+    // Re-sync the draft whenever a different snapshot is opened
+    setContextDraft(selectedRecord?.user_context || '')
+    setContextOpen(!!selectedRecord?.user_context)
+    setReasoningOpen(false)
+    setContextStatus('idle')
+  }, [selectedRecord?.id])
+
   if (!isOpen || !selectedRecord) return null
 
   const isProcessing = processingIds.includes(selectedRecord.id)
   const snapshotLogs = logs[selectedRecord.id] || []
+
+  const saveUserContext = async () => {
+    try {
+      setSavingContext(true)
+      setContextStatus('idle')
+      const resp = await axios.post(`/api/snapshots/${selectedRecord.id}/context`, {
+        user_context: contextDraft
+      })
+      setSelectedRecord({ ...selectedRecord, user_context: resp.data.user_context })
+      setContextStatus('saved')
+    } catch (e) {
+      console.error('Error saving user context', e)
+      setContextStatus('error')
+    } finally {
+      setSavingContext(false)
+    }
+  }
+
+  const contextDirty = (contextDraft || '') !== (selectedRecord.user_context || '')
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 font-sans">
@@ -158,6 +193,77 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             </h2>
             <p className="text-text-secondary text-body-sm leading-relaxed">{selectedRecord.description}</p>
           </div>
+
+          {/* Collapsible user-written context note */}
+          <div className="bg-surface-container-low p-4 rounded border border-surface-container-high space-y-2">
+            <button
+              type="button"
+              onClick={() => setContextOpen(!contextOpen)}
+              className="w-full text-left flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-text-secondary font-messina cursor-pointer select-none"
+            >
+              <span className="flex items-center gap-1.5">
+                <NotebookPen className="w-4 h-4 text-primary" /> My Context Note
+                {selectedRecord.user_context && (
+                  <span className="text-primary normal-case tracking-normal font-mono">(set)</span>
+                )}
+              </span>
+              {contextOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+            {contextOpen && (
+              <div className="space-y-2">
+                <p className="text-[11px] text-text-secondary leading-relaxed">
+                  Describe what you were actually working on in this screenshot. This note is treated as authoritative
+                  context by the analysis prompts and improves project classification when the snapshot is (re)processed.
+                </p>
+                <textarea
+                  value={contextDraft}
+                  onChange={(e) => {
+                    setContextDraft(e.target.value)
+                    setContextStatus('idle')
+                  }}
+                  rows={3}
+                  placeholder="e.g. Debugging the screenshot-timing bug in aw-vision watcher.py for ticket PRJ-2026-042..."
+                  className="w-full bg-surface-container-lowest border border-surface-container p-2.5 rounded text-body-sm text-neutral-dark outline-none focus:border-primary leading-relaxed"
+                />
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-mono">
+                    {contextStatus === 'saved' && <span className="text-success-green">Saved.</span>}
+                    {contextStatus === 'error' && <span className="text-danger-primary">Failed to save note.</span>}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={saveUserContext}
+                    disabled={savingContext || !contextDirty}
+                    className="bg-primary hover:opacity-90 text-white text-action-sm font-semibold py-1.5 px-3 rounded flex items-center gap-2 transition-colors disabled:opacity-40 select-none cursor-pointer font-messina"
+                  >
+                    {savingContext ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <NotebookPen className="w-3.5 h-3.5" />}
+                    Save Note
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Collapsible AI project-classification reasoning */}
+          {selectedRecord.is_processed && selectedRecord.analysis_reasoning && (
+            <div className="bg-surface-container-low p-4 rounded border border-surface-container-high space-y-2">
+              <button
+                type="button"
+                onClick={() => setReasoningOpen(!reasoningOpen)}
+                className="w-full text-left flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-text-secondary font-messina cursor-pointer select-none"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Brain className="w-4 h-4 text-primary" /> Classification Reasoning
+                </span>
+                {reasoningOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+              </button>
+              {reasoningOpen && (
+                <p className="text-body-sm text-neutral-dark leading-relaxed whitespace-pre-wrap bg-surface-container-lowest border border-surface-container p-3 rounded max-h-48 overflow-y-auto">
+                  {selectedRecord.analysis_reasoning}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Unique Scene Elements & Tools */}
           {selectedRecord.is_processed && selectedRecord.unique_things && (

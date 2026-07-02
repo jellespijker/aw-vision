@@ -47,6 +47,8 @@ export interface HistoryRecord {
   is_processed?: boolean
   human_labeled?: boolean
   unique_things?: string | null
+  user_context?: string | null
+  analysis_reasoning?: string | null
 }
 
 export interface Project {

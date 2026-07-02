@@ -74,6 +74,8 @@ class SchemaMixin:
                 pa.field("project_number", pa.string(), nullable=True),
                 pa.field("human_labeled", pa.bool_(), nullable=True),
                 pa.field("unique_things", pa.string(), nullable=True),
+                pa.field("user_context", pa.string(), nullable=True),
+                pa.field("analysis_reasoning", pa.string(), nullable=True),
                 pa.field("duration_ocr", pa.float64(), nullable=True),
                 pa.field("duration_vision", pa.float64(), nullable=True),
                 pa.field("duration_embedding", pa.float64(), nullable=True),
@@ -98,6 +100,10 @@ class SchemaMixin:
                     rec["human_labeled"] = False
                 if "unique_things" not in rec:
                     rec["unique_things"] = None
+                if "user_context" not in rec:
+                    rec["user_context"] = None
+                if "analysis_reasoning" not in rec:
+                    rec["analysis_reasoning"] = None
                 if "duration_ocr" not in rec:
                     rec["duration_ocr"] = None
                 if "duration_vision" not in rec:
@@ -150,6 +156,8 @@ class SchemaMixin:
                     "ocr_text" not in schema.names
                     or "human_labeled" not in schema.names
                     or "unique_things" not in schema.names
+                    or "user_context" not in schema.names
+                    or "analysis_reasoning" not in schema.names
                     or "duration_ocr" not in schema.names
                     or "duration_vision" not in schema.names
                     or "duration_embedding" not in schema.names

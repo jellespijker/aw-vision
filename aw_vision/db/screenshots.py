@@ -142,6 +142,15 @@ class ScreenshotsMixin:
             print(f"Error updating project label for record {record_id}: {e}")
             raise e
 
+    def update_user_context(self, record_id: str, user_context: Optional[str]):
+        """Update the free-text user-provided context note for a specific record."""
+        try:
+            self.table.update(where=f"id = '{record_id}'", values={"user_context": user_context})
+            print(f"Updated user_context for record {record_id} ({len(user_context or '')} chars)")
+        except Exception as e:
+            print(f"Error updating user context for record {record_id}: {e}")
+            raise e
+
     def get_past_neighbor(self, timestamp: float) -> dict | None:
         """Get the closest snapshot record immediately preceding the given timestamp."""
         try:
