@@ -759,6 +759,7 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
                 "unique_things": r.get("unique_things"),
                 "user_context": r.get("user_context"),
                 "analysis_reasoning": r.get("analysis_reasoning"),
+                "classification_confidence": r.get("classification_confidence"),
             })
 
         # 3. Filter pending if searching (simple case-insensitive substring match)
@@ -898,6 +899,7 @@ def process_single_screenshot(file_id: str):
             "unique_things": record.get("unique_things"),
             "user_context": record.get("user_context"),
             "analysis_reasoning": record.get("analysis_reasoning"),
+            "classification_confidence": record.get("classification_confidence"),
         }
     except HTTPException:
         raise

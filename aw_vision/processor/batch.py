@@ -227,6 +227,7 @@ class BatchMixin:
                     "unique_things": meta.get("unique_things"),
                     "user_context": meta.get("user_context"),
                     "analysis_reasoning": meta.get("analysis_reasoning"),
+                    "classification_confidence": meta.get("classification_confidence"),
                     "vector": embedding,
                     "duration_ocr": meta.get("duration_ocr"),
                     "duration_vision": meta.get("duration_vision"),

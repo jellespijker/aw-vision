@@ -14,6 +14,12 @@ from aw_vision.prompts import build_mcp_context_block, build_user_context_block,
 from aw_vision.skills import skills_context_for_slot
 
 
+def _normalize_match_type(value) -> str | None:
+    """Validate the model's match_type output to one of direct/thematic/none."""
+    v = (str(value or "")).strip().lower()
+    return v if v in ("direct", "thematic", "none") else None
+
+
 def mcp_enrich(slot: str, query: str) -> str:
     """Fetch external MCP context assigned to a given pipeline prompt slot.
 
@@ -92,6 +98,7 @@ class VisionSweepMixin:
                             meta["project_number"] = res.get("project_number", "None")
                             meta["unique_things"] = res.get("unique_things", "None detected.")
                             meta["analysis_reasoning"] = (res.get("project_reasoning") or "").strip() or None
+                            meta["classification_confidence"] = _normalize_match_type(res.get("match_type"))
                             meta["vector"] = []  # Generated in Phase 3
                             meta["duration_vision"] = time.time() - vision_start
 
@@ -194,6 +201,7 @@ class VisionSweepMixin:
                     tags = []
                     description = "No description generated."
                     analysis_reasoning = None
+                    classification_confidence = None
                     try:
                         self.log_step(
                             rec_id,
@@ -241,6 +249,7 @@ class VisionSweepMixin:
                         tags = syn_tags if isinstance(syn_tags, list) else []
                         description = (parsed_syn.get("description") or "").strip() or description
                         analysis_reasoning = (parsed_syn.get("project_reasoning") or "").strip() or None
+                        classification_confidence = _normalize_match_type(parsed_syn.get("match_type"))
                         self.log_step(
                             rec_id,
                             f"Synthesis complete: Project='{project_number}', Tags={tags}, Desc={description[:120]}...",
@@ -256,6 +265,7 @@ class VisionSweepMixin:
                     meta["project_number"] = project_number
                     meta["unique_things"] = unique_things
                     meta["analysis_reasoning"] = analysis_reasoning
+                    meta["classification_confidence"] = classification_confidence
                     meta["duration_vision"] = time.time() - vision_start
 
                     # Persist results to metadata JSON file on disk

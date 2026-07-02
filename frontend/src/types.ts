@@ -56,6 +56,7 @@ export interface HistoryRecord {
   unique_things?: string | null
   user_context?: string | null
   analysis_reasoning?: string | null
+  classification_confidence?: 'direct' | 'thematic' | 'none' | null
 }
 
 export interface Project {

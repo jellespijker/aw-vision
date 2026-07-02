@@ -183,6 +183,24 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               <span className="bg-surface-container-low text-text-secondary font-semibold px-2.5 py-1 rounded border border-surface-container-high font-sans text-body-sm">
                 {selectedRecord.app_name}
               </span>
+              {selectedRecord.is_processed && !selectedRecord.human_labeled && selectedRecord.classification_confidence && (
+                <span
+                  title="How directly the AI could tie the on-screen evidence to the assigned project"
+                  className={`text-[10px] font-semibold uppercase tracking-wider font-mono px-2 py-0.5 rounded border ${
+                    selectedRecord.classification_confidence === 'direct'
+                      ? 'bg-success-green/10 border-success-green/30 text-success-green'
+                      : selectedRecord.classification_confidence === 'thematic'
+                        ? 'bg-warning-light border-surface-container-high text-neutral-dark'
+                        : 'bg-surface-container-low border-surface-container-high text-text-secondary'
+                  }`}
+                >
+                  {selectedRecord.classification_confidence === 'direct'
+                    ? 'Direct match'
+                    : selectedRecord.classification_confidence === 'thematic'
+                      ? 'Thematic match'
+                      : 'No match'}
+                </span>
+              )}
             </div>
             <span className="text-text-secondary font-medium">{formatTimestamp(selectedRecord.timestamp)}</span>
           </div>
