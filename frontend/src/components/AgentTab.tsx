@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 import {
   Bot,
   User,
@@ -13,9 +13,14 @@ import {
   Paperclip,
   CheckCircle2,
   Terminal,
-  Trash2
+  Trash2,
+  Wrench,
+  Plug,
+  ChevronDown,
+  ChevronRight,
+  AlertCircle
 } from 'lucide-react'
-import type { ChatMessage, HistoryRecord, Project, DaemonStatus } from '../types'
+import type { ChatMessage, HistoryRecord, Project, DaemonStatus, ToolEvent } from '../types'
 
 interface AgentTabProps {
   chatMessages: ChatMessage[]
@@ -45,6 +50,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
   clearChat
 }) => {
   const chatLogsRef = useRef<HTMLDivElement>(null)
+  const [expandedToolEvent, setExpandedToolEvent] = useState<string | null>(null)
 
   useEffect(() => {
     if (chatLogsRef.current) {
@@ -409,6 +415,46 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                     }`}>
                       {isUser ? 'You' : 'Memory Agent'}
                     </div>
+                    {!isUser && msg.tool_events && msg.tool_events.length > 0 && (
+                      <div className="mb-3 space-y-1.5">
+                        {msg.tool_events.map((ev, evIdx) => {
+                          const key = `${index}-${evIdx}`
+                          const isOpen = expandedToolEvent === key
+                          return (
+                            <div key={key} className="rounded border border-surface-container-high bg-surface-container-low">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedToolEvent(isOpen ? null : key)}
+                                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-technical-sm font-mono text-neutral-dark cursor-pointer select-none text-left"
+                              >
+                                {ev.error ? (
+                                  <AlertCircle className="w-3.5 h-3.5 text-danger-primary shrink-0" />
+                                ) : ev.source === 'mcp' ? (
+                                  <Plug className="w-3.5 h-3.5 text-primary shrink-0" />
+                                ) : (
+                                  <Wrench className="w-3.5 h-3.5 text-primary shrink-0" />
+                                )}
+                                <span className="font-semibold shrink-0">{ev.tool}</span>
+                                <span className="text-text-secondary truncate flex-1">({ev.args || ''})</span>
+                                {typeof ev.duration_seconds === 'number' && (
+                                  <span className="text-[10px] text-text-secondary shrink-0">{ev.duration_seconds.toFixed(1)}s</span>
+                                )}
+                                {isOpen ? (
+                                  <ChevronDown className="w-3 h-3 text-text-secondary shrink-0" />
+                                ) : (
+                                  <ChevronRight className="w-3 h-3 text-text-secondary shrink-0" />
+                                )}
+                              </button>
+                              {isOpen && (
+                                <pre className="px-2.5 pb-2 text-[10px] font-mono text-text-secondary whitespace-pre-wrap max-h-40 overflow-y-auto leading-normal">
+                                  {ev.result_preview || '[no textual result]'}
+                                </pre>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                     <div>{renderMessageContent(msg.content, isUser)}</div>
                   </div>
                 </div>
@@ -436,23 +482,19 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                   </span>
                 </div>
 
-                {/* AG-UI Pipeline Steps visualizer */}
+                {/* ReAct loop indicator — real tool calls appear on the reply when it lands */}
                 <div className="bg-surface-container-lowest border border-surface-container-high rounded-xl p-3.5 text-technical-sm font-mono space-y-2 select-none">
                   <div className="flex items-center gap-2 text-text-secondary font-bold text-[10px] uppercase tracking-wider font-messina pb-2 border-b border-surface-container-high">
                     <Terminal className="w-3.5 h-3.5 text-primary" />
-                    <span>AG-UI Live Graph Protocol Steps</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-success-green">
-                    <span className="w-1.5 h-1.5 rounded-full bg-success-green"></span>
-                    <span>[AG-UI] Step 1: Embedding generation (embeddinggemma) - SUCCESS</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-success-green">
-                    <span className="w-1.5 h-1.5 rounded-full bg-success-green"></span>
-                    <span>[AG-UI] Step 2: Querying LanceDB semantic coordinate index - SUCCESS</span>
+                    <span>ReAct Agent Loop</span>
                   </div>
                   <div className="flex items-center gap-2 text-primary animate-pulse">
                     <RefreshCw className="w-3 h-3 animate-spin" />
-                    <span>[AG-UI] Step 3: Graph routing state execution & synthesis...</span>
+                    <span>Reasoning and calling tools (semantic memory, MCP integrations)...</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-text-secondary">
+                    <Wrench className="w-3 h-3" />
+                    <span>Executed tool calls will be shown on the reply.</span>
                   </div>
                 </div>
               </div>

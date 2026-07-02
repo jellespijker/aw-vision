@@ -563,7 +563,10 @@ export default function App() {
         history: chatMessages
       })
       if (resp.status === 200) {
-        setChatMessages([...updatedHistory, { role: 'assistant', content: resp.data.response }])
+        setChatMessages([
+          ...updatedHistory,
+          { role: 'assistant', content: resp.data.response, tool_events: resp.data.tool_events || [] }
+        ])
       }
     } catch (e: any) {
       setChatMessages([
@@ -580,6 +583,14 @@ export default function App() {
 
   const clearChat = () => {
     setChatMessages([])
+  }
+
+  const searchForPerson = (name: string) => {
+    // Jump to the gallery filtered to every moment involving this person.
+    setLightboxOpen(false)
+    setActiveTab('gallery')
+    setSearchQuery(name)
+    fetchHistory(1, name)
   }
 
   const openImageLightbox = async (rec: HistoryRecord) => {
@@ -780,6 +791,7 @@ export default function App() {
           setExpandedOcrCardId={setExpandedOcrCardId}
           formatTimestamp={formatTimestamp}
           API_BASE={API_BASE}
+          searchForPerson={searchForPerson}
         />
 
         {/* Floating Google Photos-Style Timeline Scrollbar */}

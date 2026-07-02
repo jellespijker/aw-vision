@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import axios from 'axios'
-import { X, Archive, User, FileText, RefreshCw, Cpu, Sparkles, NotebookPen, Loader2, Brain, ChevronDown, ChevronRight } from 'lucide-react'
+import { X, Archive, User, Users, FileText, RefreshCw, Cpu, Sparkles, NotebookPen, Loader2, Brain, ChevronDown, ChevronRight } from 'lucide-react'
 import type { HistoryRecord, Project } from '../types'
 
 interface LightboxModalProps {
@@ -20,6 +20,7 @@ interface LightboxModalProps {
   setExpandedOcrCardId: (val: string | null) => void
   formatTimestamp: (ts: number) => string
   API_BASE: string
+  searchForPerson?: (name: string) => void
 }
 
 export const LightboxModal: React.FC<LightboxModalProps> = ({
@@ -38,7 +39,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   expandedOcrCardId,
   setExpandedOcrCardId,
   formatTimestamp,
-  API_BASE
+  API_BASE,
+  searchForPerson
 }) => {
   // Per-screenshot user context note (collapsible editor)
   const [contextOpen, setContextOpen] = useState<boolean>(false)
@@ -295,6 +297,28 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                   {selectedRecord.analysis_reasoning}
                 </p>
               )}
+            </div>
+          )}
+
+          {/* People recognized in this snapshot */}
+          {selectedRecord.is_processed && selectedRecord.people && selectedRecord.people.length > 0 && (
+            <div className="bg-surface-container-low p-4 rounded border border-surface-container-high space-y-2">
+              <h3 className="text-[10px] font-semibold uppercase tracking-wider text-text-secondary flex items-center gap-1.5 font-messina">
+                <Users className="w-4 h-4 text-primary" /> People Involved
+              </h3>
+              <div className="flex flex-wrap gap-1.5">
+                {selectedRecord.people.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    title={`Show all moments involving ${name}`}
+                    onClick={() => searchForPerson && searchForPerson(name)}
+                    className="text-technical-sm font-semibold bg-accent-surface border border-surface-container-high text-primary px-2 py-0.5 rounded font-mono flex items-center gap-1 cursor-pointer hover:border-primary transition-colors"
+                  >
+                    <User className="w-3 h-3" /> {name}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 

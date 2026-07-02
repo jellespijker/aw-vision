@@ -14,6 +14,24 @@ from aw_vision.prompts import build_mcp_context_block, build_user_context_block,
 from aw_vision.skills import skills_context_for_slot
 
 
+def _normalize_people(value) -> list[str]:
+    """Validate the model's people output into a clean, deduplicated list of names."""
+    if not isinstance(value, list):
+        return []
+    out, seen = [], set()
+    for v in value:
+        name = str(v or "").strip()
+        if not name or len(name) > 80:
+            continue
+        if name.lower() in ("you", "me", "unknown", "admin", "user", "none", "n/a"):
+            continue
+        key = name.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(name)
+    return out[:20]
+
+
 def _normalize_match_type(value) -> str | None:
     """Validate the model's match_type output to one of direct/thematic/none."""
     v = (str(value or "")).strip().lower()
@@ -99,6 +117,7 @@ class VisionSweepMixin:
                             meta["unique_things"] = res.get("unique_things", "None detected.")
                             meta["analysis_reasoning"] = (res.get("project_reasoning") or "").strip() or None
                             meta["classification_confidence"] = _normalize_match_type(res.get("match_type"))
+                            meta["people"] = _normalize_people(res.get("people"))
                             meta["vector"] = []  # Generated in Phase 3
                             meta["duration_vision"] = time.time() - vision_start
 
@@ -202,19 +221,31 @@ class VisionSweepMixin:
                     description = "No description generated."
                     analysis_reasoning = None
                     classification_confidence = None
+                    people = []
                     try:
                         self.log_step(
                             rec_id,
                             "Vision pass 2/2: Classifying project, generating tags & synthesizing description...",
                         )
 
-                        # Optional external MCP context (GitHub/Jira/etc.) for classification.
-                        mcp_query_syn = (
-                            f"{meta.get('app_name', '')} {meta.get('window_title', '')} {truncated_ocr[:200]}".strip()
+                        # MCP tools assigned to this slot are exposed as callable ReAct
+                        # tools (uniform CALL_TOOL protocol) instead of the old
+                        # pre-gathered context heuristic. With no tools assigned this
+                        # is exactly one JSON-constrained call, as before.
+                        from aw_vision.tooling import (
+                            extract_json_object,
+                            format_tools_block,
+                            mcp_tools_for_slot,
+                            run_react_loop,
                         )
-                        mcp_ctx_syn = mcp_enrich("local_synthesis", mcp_query_syn)
-                        if mcp_ctx_syn:
-                            self.log_step(rec_id, "Injected external MCP context into local synthesis prompt.")
+
+                        syn_tools = mcp_tools_for_slot("local_synthesis")
+                        if syn_tools:
+                            self.log_step(
+                                rec_id,
+                                f"Synthesis runs as ReAct agent with {len(syn_tools)} MCP tool(s): "
+                                + ", ".join(t.name for t in syn_tools),
+                            )
 
                         prompt_syn = render_prompt(
                             prompt_store.get("local_synthesis"),
@@ -230,26 +261,47 @@ class VisionSweepMixin:
                                 "neighbor_context": history.get("neighbor_context", "- Not available."),
                                 "similar_snapshots": history.get("similar_snapshots", "[]"),
                                 "app_frequencies": history.get("app_frequencies", "  * Not available."),
-                                "mcp_context_block": build_mcp_context_block(mcp_ctx_syn),
+                                "mcp_context_block": "",
                                 "skills_block": skills_context_for_slot("local_synthesis"),
+                                "tools_block": format_tools_block(syn_tools),
                                 "projects": projects_str,
                                 "existing_tags": existing_tags,
                             },
                         )
-                        response_syn = client.chat(
-                            model=config.vision_model,
-                            messages=[{"role": "user", "content": prompt_syn}],
-                            format="json",
-                            options={"temperature": 0.2, "num_ctx": num_ctx},
-                            keep_alive=final_keep_alive,
+
+                        def _syn_llm(loop_messages, force_json):
+                            # Tool turns keep the model warm; only a tool-less run may
+                            # unload immediately on the last batch item.
+                            response = client.chat(
+                                model=config.vision_model,
+                                messages=loop_messages,
+                                format="json" if (force_json or not syn_tools) else None,
+                                options={"temperature": 0.2, "num_ctx": num_ctx},
+                                keep_alive=final_keep_alive if not syn_tools else 300,
+                            )
+                            return response.get("message", {}).get("content", "") or ""
+
+                        reply_syn, syn_events = run_react_loop(
+                            _syn_llm,
+                            prompt_syn,
+                            syn_tools,
+                            max_steps=2,
+                            log=lambda m: self.log_step(rec_id, m),
                         )
-                        parsed_syn = json.loads(response_syn.get("message", {}).get("content", "") or "{}")
+                        for ev in syn_events:
+                            self.log_step(
+                                rec_id,
+                                f"Tool {ev['tool']}({str(ev['args'])[:80]}) -> "
+                                f"{'ERROR: ' if ev['error'] else ''}{ev['result_preview'][:160]}",
+                            )
+                        parsed_syn = json.loads(extract_json_object(reply_syn))
                         project_number = (parsed_syn.get("project_number") or "None").strip() or "None"
                         syn_tags = parsed_syn.get("tags", [])
                         tags = syn_tags if isinstance(syn_tags, list) else []
                         description = (parsed_syn.get("description") or "").strip() or description
                         analysis_reasoning = (parsed_syn.get("project_reasoning") or "").strip() or None
                         classification_confidence = _normalize_match_type(parsed_syn.get("match_type"))
+                        people = _normalize_people(parsed_syn.get("people"))
                         self.log_step(
                             rec_id,
                             f"Synthesis complete: Project='{project_number}', Tags={tags}, Desc={description[:120]}...",
@@ -266,6 +318,7 @@ class VisionSweepMixin:
                     meta["unique_things"] = unique_things
                     meta["analysis_reasoning"] = analysis_reasoning
                     meta["classification_confidence"] = classification_confidence
+                    meta["people"] = people
                     meta["duration_vision"] = time.time() - vision_start
 
                     # Persist results to metadata JSON file on disk
