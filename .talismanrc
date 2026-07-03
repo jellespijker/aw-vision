@@ -26,7 +26,7 @@ fileignoreconfig:
 - filename: frontend/src/components/AgentTab.tsx
   checksum: 44100fc6c83009e9835edd61fccb672de1def66ad04b95619a46adf5b530e845
 - filename: aw_vision/agent.py
-  checksum: c9d7e664ca9cb5ed451e59a58b9c7f4e6bd07f7cdd37fc2152e60fe2721758f5
+  checksum: b3c75f25e75d8610791f332041982d9624d066e3533bf677203b474e7b48717f
 - filename: frontend/package-lock.json
   checksum: ca2767758ead2cdb15866f3a322a0e6813c79b1f68e03d30d5b32b6d097f9c04
 - filename: aw_vision/settings.py
@@ -59,4 +59,6 @@ fileignoreconfig:
   checksum: 193f57dae36105361dcd1c7f1491ed04ceb661c39012b990353beacbd122fb3d
 - filename: aw_vision/processor/history_context.py
   checksum: fc34551c728b1ecd72ed01d217f2259f05eb54fa6a8976a0a288cc43f6426be9
+- filename: tests/test_command_execution.py
+  checksum: c12e86c99bce7e47977fc50c858321fc41806df7aab03e93f1926489457841fa
 version: ""

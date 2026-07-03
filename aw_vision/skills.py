@@ -10,6 +10,7 @@ context extraction and project classification.
 import base64
 import io
 import json
+import os
 import time
 import uuid
 import zipfile
@@ -65,8 +66,9 @@ def extract_skill_content(filename: str, raw: bytes) -> str:
 def normalize_skill(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Coerce an arbitrary incoming dict into a fully-formed skill config."""
     assignments = [a for a in (raw.get("assignments") or []) if a in VALID_SLOT_IDS]
+    skill_id = raw.get("id") or uuid.uuid4().hex[:12]
     return {
-        "id": raw.get("id") or uuid.uuid4().hex[:12],
+        "id": skill_id,
         "name": (raw.get("name") or "Unnamed Skill").strip(),
         "description": (raw.get("description") or "").strip(),
         "enabled": bool(raw.get("enabled", True)),
@@ -74,6 +76,9 @@ def normalize_skill(raw: Dict[str, Any]) -> Dict[str, Any]:
         "filename": (raw.get("filename") or "").strip(),
         "assignments": assignments,
         "updated_at": float(raw.get("updated_at") or time.time()),
+        # Disk-discovered skills (skills_dir) are read-only: the file is the
+        # source of truth for content; only assignments/enabled live in the DB.
+        "source": "disk" if str(skill_id).startswith("disk_") else "upload",
     }
 
 
@@ -130,6 +135,69 @@ class SkillStore:
         except Exception as e:
             print(f"Warning: could not load skills from LanceDB: {e}")
 
+        # Discover skills from config.skills_dir if configured and exists
+        try:
+            skills_dir = getattr(config, "skills_dir", None)
+            if skills_dir and os.path.isdir(skills_dir):
+                from pathlib import Path
+                dir_path = Path(skills_dir)
+                discovered_disk_ids = set()
+                for child in dir_path.iterdir():
+                    skill_content = None
+                    filename = child.name
+                    skill_name_derived = child.name
+
+                    if child.is_dir():
+                        # Look for SKILL.md in directory
+                        for subchild in child.iterdir():
+                            if subchild.is_file() and subchild.name.upper() == "SKILL.MD":
+                                try:
+                                    skill_content = subchild.read_text(encoding="utf-8", errors="replace")
+                                except Exception as err:
+                                    print(f"Warning: could not read skill file '{subchild}': {err}")
+                                break
+                    elif child.is_file() and child.suffix.lower() == ".md":
+                        try:
+                            skill_content = child.read_text(encoding="utf-8", errors="replace")
+                        except Exception as err:
+                            print(f"Warning: could not read skill file '{child}': {err}")
+                        skill_name_derived = child.stem
+
+                    if skill_content is not None:
+                        parsed = parse_skill_markdown(skill_content)
+                        # Derive a stable ID
+                        stable_id = f"disk_{skill_name_derived.lower()}"
+                        discovered_disk_ids.add(stable_id)
+
+                        # Merge with database configuration if it exists to preserve assignments and enabled toggles
+                        existing = self._cache.get(stable_id)
+
+                        cfg = {
+                            "id": stable_id,
+                            "name": parsed["name"] or (existing.get("name") if existing else skill_name_derived),
+                            "description": parsed["description"] or (existing.get("description") if existing else ""),
+                            "enabled": existing.get("enabled", True) if existing else True,
+                            "content": skill_content,
+                            "filename": filename,
+                            "assignments": existing.get("assignments", []) if existing else [],
+                            "updated_at": os.path.getmtime(child) if hasattr(os, "getmtime") else time.time(),
+                        }
+
+                        self._cache[stable_id] = normalize_skill(cfg)
+
+                # Remove disk-prefixed cache entries that are no longer present on
+                # disk, including their persisted override rows so renamed/removed
+                # files do not leave stale configuration behind.
+                for key in list(self._cache.keys()):
+                    if key.startswith("disk_") and key not in discovered_disk_ids:
+                        self._cache.pop(key, None)
+                        try:
+                            self.table.delete(f"id = '{key}'")
+                        except Exception:
+                            pass
+        except Exception as e:
+            print(f"Warning: could not load skills from skills_dir: {e}")
+
     def list(self) -> List[Dict[str, Any]]:
         skills = [dict(v) for v in self._cache.values()]
         skills.sort(key=lambda s: s.get("name", "").lower())
@@ -177,6 +245,12 @@ class SkillStore:
         return self.save(cfg)
 
     def delete(self, skill_id: str) -> bool:
+        """Delete an uploaded skill's row and cache entry.
+
+        For disk-discovered skills this only clears the persisted overrides
+        (assignments/enabled); the skill reappears from disk on the next
+        reload. The API layer blocks deleting disk skills for that reason.
+        """
         existed = skill_id in self._cache
         self._cache.pop(skill_id, None)
         try:

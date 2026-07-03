@@ -258,6 +258,93 @@ def tool_query_jira(jql: str) -> str:
     return f"Jira Search for '{jql}':\n- Found 0 matching issues in current local context."
 
 
+def tool_execute_command(command: str) -> str:
+    """Execute a whitelisted local command-line tool (such as 'gws' or 'gh') in a secure sandbox."""
+    try:
+        import shlex
+        import shutil
+
+        # Clean command and reject any forbidden characters or shell operators as a defense-in-depth measure
+        cmd_str = (command or "").strip()
+        if not cmd_str:
+            return "Error: Command cannot be empty."
+
+        # Detect dangerous characters that are common in shell injections
+        # Since we run with shell=False, subprocess doesn't interpret them, but shlex.split might
+        # still parse them as arguments. We explicitly block them to enforce strict command-line whitelisting.
+        forbidden_chars = [";", "&&", "||", "|", ">", "<", "`", "$", "\n", "\r"]
+        for char in forbidden_chars:
+            if char in cmd_str:
+                return f"Error: Command contains forbidden shell operator or character '{char}'."
+
+        # Safely split command into arguments using shlex (handles quotes and JSON parameters perfectly)
+        try:
+            args = shlex.split(cmd_str)
+        except Exception as e:
+            return f"Error parsing command arguments: {e}"
+
+        if not args:
+            return "Error: Command resolved to an empty argument list."
+
+        # Extract the base binary name
+        binary = args[0]
+
+        # Restrict strictly to whitelisted commands
+        if binary not in ("gws", "gh"):
+            return f"Error: Command '{binary}' is not whitelisted. Only 'gws' and 'gh' are permitted."
+
+        # Check if the binary is available on the system
+        if not shutil.which(binary):
+            return f"Error: CLI tool '{binary}' is not installed or not in PATH."
+
+        # Build clean environment with only whitelisted environment variables
+        clean_env = {}
+        # Preserving essential PATH and HOME
+        if "PATH" in os.environ:
+            clean_env["PATH"] = os.environ["PATH"]
+        if "HOME" in os.environ:
+            clean_env["HOME"] = os.environ["HOME"]
+
+        # Whitelist other specific auth or config variables
+        for key, value in os.environ.items():
+            if key.startswith("GOOGLE_WORKSPACE_") or key.startswith("GITHUB_") or key.startswith("GH_"):
+                clean_env[key] = value
+
+        # Run command securely with shell=False and 10.0-second timeout
+        res = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            env=clean_env,
+            timeout=10.0,
+            shell=False,
+        )
+
+        # Format stdout and stderr
+        stdout = (res.stdout or "").strip()
+        stderr = (res.stderr or "").strip()
+
+        output = []
+        if res.returncode == 0:
+            if stdout:
+                output.append(stdout)
+            else:
+                output.append(f"Command '{binary}' executed successfully with no stdout.")
+        else:
+            output.append(f"Command '{binary}' failed with exit code {res.returncode}.")
+            if stdout:
+                output.append(f"Stdout:\n{stdout}")
+            if stderr:
+                output.append(f"Stderr:\n{stderr}")
+
+        return "\n".join(output)
+
+    except subprocess.TimeoutExpired:
+        return "Error: Command execution timed out after 10 seconds."
+    except Exception as e:
+        return f"Error executing command: {e}"
+
+
 def tool_get_similar_labeled_snapshots(query: str, limit: int = 5) -> str:
     """Search the database for similar labeled snapshots. This tool scores results by favoring manually/human labeled data and matching tags/app names."""
     try:
@@ -463,6 +550,7 @@ TOOLS = {
     "aggregate_project_hours": tool_aggregate_project_hours,
     "query_github": tool_query_github,
     "query_jira": tool_query_jira,
+    "execute_command": tool_execute_command,
 }
 
 
@@ -614,6 +702,7 @@ def run_agent_node(state: AgentState) -> AgentState:
         "- aggregate_project_hours(): Return total active hours spent on each project number.",
         "- query_github(query): Find commits, PRs, or issues on user's GitHub repositories.",
         "- query_jira(jql): Search Jira issues.",
+        "- execute_command(command): Execute a whitelisted local command-line tool. Only 'gws' and 'gh' commands are permitted. Dangerous shell syntax (pipes, redirects, etc.) is blocked. Useful for managing email, drive, docs, git repos, or tickets. Example: execute_command(\"gws gmail users messages list --params '{\\\"userId\\\": \\\"me\\\"}'\").",
     ]
 
     # Append any MCP tools the user assigned to the Ask Memory Agent.
@@ -739,7 +828,7 @@ def run_agent_node(state: AgentState) -> AgentState:
         lower_reply = reply.lower()
         planning_signals = ["step 1", "i'll start by", "i will start by", "first step", "first, i'll", "first, i will", "should check recent", "start with getting recent", "let's start with", "let's start by"]
         if any(sig in lower_reply for sig in planning_signals):
-            for t_name in ["get_activity_for_timeframe", "get_current_datetime", "get_recent_screenshots", "search_screenshots_semantic", "get_active_projects", "aggregate_project_hours", "query_github", "query_jira", "get_similar_labeled_snapshots"]:
+            for t_name in ["get_activity_for_timeframe", "get_current_datetime", "get_recent_screenshots", "search_screenshots_semantic", "get_active_projects", "aggregate_project_hours", "query_github", "query_jira", "get_similar_labeled_snapshots", "execute_command"]:
                 if t_name in reply:
                     arg = "10" if t_name == "get_recent_screenshots" else "None"
                     print(f"[Fallback Parser] Detected planning words and tool '{t_name}'. Automatically appending CALL_TOOL line.")
@@ -750,7 +839,7 @@ def run_agent_node(state: AgentState) -> AgentState:
     if not match:
         # Heuristic fallback 3: Conversational tool call intent like "Let's call get_active_projects" or "I should check search_screenshots_semantic"
         intent_match = re.search(
-            r"(?:call|run|query|check|use|using|execute|retrieve|get|trigger|need to|should|could|can|start with|first)\b.{0,40}\b(get_activity_for_timeframe|get_current_datetime|get_recent_screenshots|search_screenshots_semantic|get_active_projects|aggregate_project_hours|query_github|query_jira|get_similar_labeled_snapshots)\b",
+            r"(?:call|run|query|check|use|using|execute|retrieve|get|trigger|need to|should|could|can|start with|first)\b.{0,40}\b(get_activity_for_timeframe|get_current_datetime|get_recent_screenshots|search_screenshots_semantic|get_active_projects|aggregate_project_hours|query_github|query_jira|get_similar_labeled_snapshots|execute_command)\b",
             reply,
             re.IGNORECASE
         )
@@ -760,7 +849,7 @@ def run_agent_node(state: AgentState) -> AgentState:
             if t_name == "get_recent_screenshots":
                 num_match = re.search(r"\b(\d+)\b", reply[max(0, reply.find(t_name) - 30):reply.find(t_name) + 100])
                 arg = num_match.group(1) if num_match else "10"
-            elif t_name in ["search_screenshots_semantic", "get_similar_labeled_snapshots", "query_github", "query_jira", "get_activity_for_timeframe"]:
+            elif t_name in ["search_screenshots_semantic", "get_similar_labeled_snapshots", "query_github", "query_jira", "get_activity_for_timeframe", "execute_command"]:
                 quotes_match = re.search(r"['\"]([^'\"]+)['\"]", reply[max(0, reply.find(t_name) - 50):reply.find(t_name) + 150])
                 if quotes_match:
                     arg = quotes_match.group(1).strip()
