@@ -220,16 +220,77 @@ class SkillStore:
         return [s for s in self.list() if s.get("enabled", True) and slot in (s.get("assignments") or [])]
 
 
+# Above this many assigned skills a slot switches to progressive disclosure:
+# only an index (name + description) is injected and the model pulls full
+# instructions on demand via the read_skill tool. Keeps large skill libraries
+# usable inside small local context windows.
+FULL_INJECT_MAX = 2
+
+
+def read_skill(name: str, max_chars: int = MAX_SKILL_CHARS) -> str:
+    """Return one skill's full instructions by (case-insensitive) name."""
+    query = (name or "").strip().lower()
+    if not query:
+        return "Error: provide the skill name exactly as listed in the skill index."
+    for s in skill_store.list():
+        if s.get("name", "").strip().lower() == query:
+            body = parse_skill_markdown(s.get("content", "")).get("body", "").strip()
+            if not body:
+                return f"Skill '{s['name']}' has no instructions body."
+            if len(body) > max_chars:
+                body = body[:max_chars] + "\n[... skill instructions truncated ...]"
+            return f"[Skill: {s['name']}]\n{body}"
+    return f"Error: no skill named '{name}'. Use a name from the skill index verbatim."
+
+
+def skill_tools_for_slot(slot: str) -> list:
+    """A read_skill ToolSpec when ``slot`` runs in index (disclosure) mode."""
+    try:
+        if len(skill_store.skills_for_slot(slot)) <= FULL_INJECT_MAX:
+            return []
+        from aw_vision.tooling import ToolSpec
+
+        return [
+            ToolSpec(
+                name="read_skill",
+                description=(
+                    "Load the full instructions of one skill from the SKILL INDEX by its exact name. "
+                    "Call this before applying a skill that looks relevant to the task."
+                ),
+                run=read_skill,
+                source="builtin",
+            )
+        ]
+    except Exception as e:
+        print(f"[Skills] Failed to build skill tools for slot '{slot}': {e}")
+        return []
+
+
 def skills_context_for_slot(slot: str, max_chars_per_skill: int = MAX_SKILL_CHARS) -> str:
     """Build the skill-guidance prompt block for a pipeline/agent slot.
 
-    Returns an empty string when no enabled skill is assigned to ``slot`` (the
-    common case), guaranteeing zero prompt overhead otherwise. Never raises.
+    Up to FULL_INJECT_MAX assigned skills are injected in full (previous
+    behavior); larger assignments inject a compact index instead, paired with
+    the read_skill tool from :func:`skill_tools_for_slot`. Returns "" when no
+    enabled skill is assigned (the common case). Never raises.
     """
     try:
         skills = skill_store.skills_for_slot(slot)
         if not skills:
             return ""
+
+        if len(skills) > FULL_INJECT_MAX:
+            lines = [
+                "SKILL INDEX (user-installed expert instructions; load any that is relevant "
+                "with CALL_TOOL: read_skill, <exact name> BEFORE applying it):"
+            ]
+            for s in skills:
+                desc = (s.get("description") or "").strip() or "No description."
+                if len(desc) > 160:
+                    desc = desc[:160] + "..."
+                lines.append(f"- {s['name']}: {desc}")
+            return "\n".join(lines) + "\n\n"
+
         blocks: List[str] = []
         for s in skills:
             body = parse_skill_markdown(s.get("content", "")).get("body", "").strip()

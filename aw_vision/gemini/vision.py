@@ -127,7 +127,9 @@ def run_gemini_combined_ocr_vision(
 
     # MCP tools assigned to this slot are exposed as callable ReAct tools using
     # the same CALL_TOOL protocol as every other agent in the system.
-    tools = mcp_tools_for_slot("gemini_combined")
+    from aw_vision.skills import skill_tools_for_slot
+
+    tools = mcp_tools_for_slot("gemini_combined") + skill_tools_for_slot("gemini_combined")
 
     history = history_context or {}
     prompt = render_prompt(
