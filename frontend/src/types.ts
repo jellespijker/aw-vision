@@ -27,12 +27,6 @@ export interface DaemonStatus {
   agent_model?: string
 }
 
-export interface ToolCall {
-  name: string
-  arg: string
-  result: string
-}
-
 export interface ToolEvent {
   tool: string
   args: string
@@ -45,7 +39,6 @@ export interface ToolEvent {
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
-  tool_calls?: ToolCall[]
   tool_events?: ToolEvent[]
 }
 

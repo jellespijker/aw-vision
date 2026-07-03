@@ -1,6 +1,6 @@
 # ADR-0002: CALL_TOOL text protocol for agent tool use
 
-- **Status:** Accepted (revisit planned)
+- **Status:** Partially superseded by ADR-0006 (text protocol retained as fallback)
 - **Date:** 2026-07-03 (retroactive)
 
 ## Context

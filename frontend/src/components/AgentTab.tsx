@@ -20,12 +20,12 @@ import {
   ChevronDown,
   AlertCircle
 } from 'lucide-react'
-import type { ChatMessage, HistoryRecord, Project, DaemonStatus, ToolCall, ToolEvent } from '../types'
+import type { ChatMessage, HistoryRecord, Project, DaemonStatus, ToolEvent } from '../types'
 
 interface AgentTabProps {
   chatMessages: ChatMessage[]
   querying: boolean
-  liveToolCalls: ToolCall[]
+  liveToolCalls: ToolEvent[]
   agentPrompt: string
   setAgentPrompt: (val: string) => void
   submitAgentQuery: (e?: React.FormEvent) => void
@@ -177,34 +177,6 @@ export const AgentTab: React.FC<AgentTabProps> = ({
   }
 
   // Render the actual tool calls the agent made for this answer (collapsible).
-  const renderToolCalls = (toolCalls: ToolCall[]) => {
-    return (
-      <div className="mt-3 pt-3 border-t border-surface-container-high space-y-2 select-none">
-        <div className="flex items-center gap-2 text-text-secondary font-bold text-[10px] uppercase tracking-wider font-messina">
-          <Terminal className="w-3.5 h-3.5 text-primary" />
-          <span>Tool calls ({toolCalls.length})</span>
-        </div>
-        {toolCalls.map((tc, i) => (
-          <details key={i} className="group bg-surface-container-low border border-surface-container-high rounded-lg overflow-hidden">
-            <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer text-technical-sm font-mono hover:bg-surface-container transition-colors list-none">
-              <ChevronRight className="w-3.5 h-3.5 text-text-secondary shrink-0 transition-transform group-open:rotate-90" />
-              <Wrench className="w-3.5 h-3.5 text-primary shrink-0" />
-              <span className="font-bold text-neutral-dark">{tc.name}</span>
-              {tc.arg && tc.arg.toLowerCase() !== 'none' && (
-                <span className="text-text-secondary truncate">({tc.arg})</span>
-              )}
-            </summary>
-            {tc.result && (
-              <pre className="px-3 pb-3 pt-1 text-[11px] font-mono text-text-secondary whitespace-pre-wrap break-words border-t border-surface-container-high bg-surface-container-lowest max-h-64 overflow-y-auto select-text">
-                {tc.result}
-              </pre>
-            )}
-          </details>
-        ))}
-      </div>
-    )
-  }
-
   const renderMessageContent = (text: string, isUser: boolean) => {
     if (!text) return null
 
@@ -487,7 +459,6 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                       </div>
                     )}
                     <div>{renderMessageContent(msg.content, isUser)}</div>
-                    {!isUser && msg.tool_calls && msg.tool_calls.length > 0 && renderToolCalls(msg.tool_calls)}
                   </div>
                 </div>
               )
@@ -528,18 +499,20 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                   ) : (
                     liveToolCalls.map((tc, i) => (
                       <div key={i} className="flex items-start gap-2">
-                        {tc.result ? (
+                        {tc.result_preview ? (
                           <CheckCircle2 className="w-3.5 h-3.5 text-success-green shrink-0 mt-0.5" />
                         ) : (
                           <RefreshCw className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5 animate-spin" />
                         )}
                         <div className="min-w-0">
-                          <span className="font-bold text-neutral-dark">{tc.name}</span>
-                          {tc.arg && tc.arg.toLowerCase() !== 'none' && (
-                            <span className="text-text-secondary">({tc.arg})</span>
+                          <span className="font-bold text-neutral-dark">{tc.tool}</span>
+                          {tc.args && tc.args.toLowerCase() !== 'none' && (
+                            <span className="text-text-secondary">({tc.args})</span>
                           )}
-                          {tc.result && (
-                            <span className="text-success-green ml-1">— done</span>
+                          {tc.result_preview && (
+                            <span className="text-success-green ml-1">
+                              — done{typeof tc.duration_seconds === 'number' ? ' (' + tc.duration_seconds.toFixed(1) + 's)' : ''}
+                            </span>
                           )}
                         </div>
                       </div>

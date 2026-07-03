@@ -661,6 +661,7 @@ def run_agent_node(state: AgentState) -> AgentState:
         agent_provider = "ollama"
 
     use_gemini = (agent_provider == "gemini" and is_internet_online())
+    used_native_tools = False
 
     if use_gemini:
         print(f"[Memory Agent] Routing agent reasoning to Gemini using '{agent_model}'...")
@@ -673,29 +674,49 @@ def run_agent_node(state: AgentState) -> AgentState:
         if "gemma-4" in model or "gemma4" in model or model == "gemma-4-31b-it" or model == "gemma-4-26b-a4b-it":
             model = "gemma4:e2b-it-qat"
         print(f"[Memory Agent] Routing agent reasoning to Ollama using '{model}'...")
+        num_ctx = settings_store.get_int("ollama_context_size") or 8192
+        used_native_tools = False
+
+        # Preferred path (ADR-0006): native structured tool calling. Structured
+        # calls are normalized back into the canonical CALL_TOOL line, so the
+        # graph, loop guard and streaming stay untouched. Models whose template
+        # lacks tool support are memoized and use the text protocol below.
+        reply = None
         try:
-            url = f"{config.ollama_host}/api/generate"
-            payload = {
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.1,
-                    "num_ctx": settings_store.get_int("ollama_context_size") or 8192
-                },
-                "keep_alive": 0,
-            }
-            resp = requests.post(url, json=payload, timeout=180.0)
-            if resp.status_code == 200:
-                reply = resp.json().get("response", "").strip()
-            else:
-                reply = f"Error calling Ollama text node: {resp.text}"
-        except Exception as e:
-            reply = f"Error contacting Ollama: {e}"
+            from aw_vision.tooling import ollama_chat_native
+
+            specs = list(build_agent_toolspecs().values())
+            reply = ollama_chat_native(model, prompt, specs, num_ctx)
+            used_native_tools = True
+            print(f"[Memory Agent] Native tool calling active for '{model}'.")
+        except Exception as native_err:
+            print(f"[Memory Agent] Native tool path unavailable ({native_err}); using text protocol.")
+
+        if reply is None:
+            try:
+                url = f"{config.ollama_host}/api/generate"
+                payload = {
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_ctx": num_ctx},
+                    "keep_alive": 0,
+                }
+                resp = requests.post(url, json=payload, timeout=180.0)
+                if resp.status_code == 200:
+                    reply = resp.json().get("response", "").strip()
+                else:
+                    reply = f"Error calling Ollama text node: {resp.text}"
+            except Exception as e:
+                reply = f"Error contacting Ollama: {e}"
 
     # Check if a tool needs to be called
     match = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", reply)
-    if not match:
+    if not match and used_native_tools:
+        # Native path: a reply without a normalized CALL_TOOL line IS the final
+        # answer; skip the text-protocol repair heuristics entirely.
+        pass
+    elif not match:
         # Heuristic fallback 1: Standard function call syntax like get_recent_screenshots(10)
         fallback_match = re.search(r"(?:CALL_TOOL:\s*)?(\w+)\s*\(\s*(['\" \w\-\d]*)\s*\)", reply)
         if fallback_match:
@@ -706,7 +727,7 @@ def run_agent_node(state: AgentState) -> AgentState:
                 reply += f"\n\nCALL_TOOL: {t_name}, {t_arg}"
                 match = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", reply)
 
-    if not match:
+    if not match and not used_native_tools:
         # Heuristic fallback 2: Multi-step plan without CALL_TOOL but containing tool name
         lower_reply = reply.lower()
         planning_signals = ["step 1", "i'll start by", "i will start by", "first step", "first, i'll", "first, i will", "should check recent", "start with getting recent", "let's start with", "let's start by"]
@@ -719,7 +740,7 @@ def run_agent_node(state: AgentState) -> AgentState:
                     match = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", reply)
                     break
 
-    if not match:
+    if not match and not used_native_tools:
         # Heuristic fallback 3: Conversational tool call intent like "Let's call get_active_projects" or "I should check search_screenshots_semantic"
         intent_match = re.search(
             r"(?:call|run|query|check|use|using|execute|retrieve|get|trigger|need to|should|could|can|start with|first)\b.{0,40}\b(get_activity_for_timeframe|get_current_datetime|get_recent_screenshots|search_screenshots_semantic|get_active_projects|aggregate_project_hours|query_github|query_jira|get_similar_labeled_snapshots|execute_command)\b",
