@@ -30,7 +30,7 @@ fileignoreconfig:
 - filename: frontend/package-lock.json
   checksum: ca2767758ead2cdb15866f3a322a0e6813c79b1f68e03d30d5b32b6d097f9c04
 - filename: aw_vision/settings.py
-  checksum: dfcbbe3727b560e87eb139b6cc2fab848b49d8183c3127904f4bdc0534cb7c7f
+  checksum: aa4a6481499d1fa36a820336d2a1196ab88ad75a230b5380292bd011478a6c1d
 - filename: aw_vision/gemini.py
   checksum: e1fd009f0d8bcc0b4d3849eeb9a964b02be0e50c92d58498520589a94cf2d04d
 - filename: frontend/src/components/SettingsTab.tsx
@@ -40,7 +40,7 @@ fileignoreconfig:
 - filename: frontend/src/components/PipelineTab.tsx
   checksum: 97a1209450bf841ff9a916c2b9d6e94aea7a1b8a18c48b743d831c6fcbb477d4
 - filename: aw_vision/mcp_manager.py
-  checksum: 8c4692a058bf63dbdc5aae28650dec28d692b26b6789a1822d4f02b43629a92a
+  checksum: c3939ce5d7928fa6ee4bb21e4e840d543f198c8aeab2d4b0a0900f0eddc4686c
 - filename: frontend/src/components/McpSettings.tsx
   checksum: 8a0dfac4b664677b2ccbcdf348c49b44fd7ce33fd8ad4aba4743341774c5c2b2
 - filename: aw_vision/gemini/vision.py
@@ -52,7 +52,7 @@ fileignoreconfig:
 - filename: frontend/src/components/PromptSettings.tsx
   checksum: df501afaa720e44612ca63a323252759c84e67468aac10ef8442d1758a54d7d6
 - filename: aw_vision/skills.py
-  checksum: 14bd90fd1a86e4b04f47d21feee8a3340311e677edd9aae01e9ed656c14160c1
+  checksum: 811245ed2bff9f920accbb9e7d540faa5c399c0a3ae79ec9765fa5e98ab8f1c4
 - filename: aw_vision/prompts.py
   checksum: 0325af9705876cf5d21f5d583dd1241e79b6f409c04f294e26061df8e713d489
 - filename: frontend/src/components/SkillSettings.tsx
@@ -67,4 +67,6 @@ fileignoreconfig:
   checksum: 28d0c4e8697b9b51f5fd44cae1f63a20bda6eeacb2da3adfbbff5e3a0762c7b4
 - filename: docs/adr/0001-lancedb-as-sole-datastore.md
   checksum: a1af550bbc9ee735738c7fb9ea9d2c96ec4dfb05dbbaa171005e5dc595a34d2a
+- filename: aw_vision/kvstore.py
+  checksum: 9a59e977be18e36a149bc04f2244497da48cd61a0c81e5c0b60a7c0fa833ab4a
 version: ""

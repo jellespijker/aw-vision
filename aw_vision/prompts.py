@@ -12,7 +12,7 @@ escaping and a user typo can never raise a KeyError mid-pipeline.
 
 from typing import Any, Dict, List, Optional
 
-from aw_vision.config import config
+from aw_vision.kvstore import LanceKVStore
 
 # ---------------------------------------------------------------------------
 # Shared context-block builders
@@ -256,46 +256,15 @@ class PromptStore:
     """Persist user-customized prompt templates in LanceDB (plain text)."""
 
     def __init__(self):
-        self._db_conn = None
-        self._table = None
-        self.table_name = "prompts"
+        self._kv = LanceKVStore("prompts")
         self._overrides: Dict[str, str] = {}
         self.load_all()
 
-    @property
-    def db_conn(self):
-        if self._db_conn is None:
-            import lancedb
-
-            self._db_conn = lancedb.connect(config.db_dir)
-        return self._db_conn
-
-    @property
-    def table(self):
-        if self._table is None:
-            conn = self.db_conn
-            if self.table_name in conn.table_names():
-                self._table = conn.open_table(self.table_name)
-            else:
-                import pyarrow as pa
-
-                schema = pa.schema(
-                    [pa.field("key", pa.string(), nullable=False), pa.field("value", pa.string(), nullable=False)]
-                )
-                self._table = conn.create_table(self.table_name, schema=schema)
-        return self._table
-
     def load_all(self):
         self._overrides = {}
-        try:
-            records = self.table.search().limit(100).to_list()
-            for r in records:
-                k = r.get("key")
-                v = r.get("value")
-                if k in VALID_PROMPT_IDS and v:
-                    self._overrides[k] = v
-        except Exception as e:
-            print(f"Warning: Could not load prompt overrides from LanceDB, using defaults. Error: {e}")
+        for k, v in self._kv.items(limit=100).items():
+            if k in VALID_PROMPT_IDS and v:
+                self._overrides[k] = v
 
     def get(self, prompt_id: str) -> str:
         """Return the active template for a prompt (user override or code default)."""
@@ -315,24 +284,13 @@ class PromptStore:
             self.reset(prompt_id)
             return
         self._overrides[prompt_id] = template
-        try:
-            tbl = self.table
-            try:
-                tbl.delete(f"key = '{prompt_id}'")
-            except Exception:
-                pass
-            tbl.add([{"key": prompt_id, "value": template}])
-        except Exception as e:
-            print(f"Error persisting prompt '{prompt_id}' to database: {e}")
+        self._kv.upsert(prompt_id, template)
 
     def reset(self, prompt_id: str):
         if prompt_id not in VALID_PROMPT_IDS:
             raise ValueError(f"Unknown prompt id '{prompt_id}'.")
         self._overrides.pop(prompt_id, None)
-        try:
-            self.table.delete(f"key = '{prompt_id}'")
-        except Exception as e:
-            print(f"Error deleting prompt override '{prompt_id}': {e}")
+        self._kv.delete(prompt_id)
 
     def list(self) -> List[Dict[str, Any]]:
         """Full prompt catalog for the Settings UI."""

@@ -20,7 +20,7 @@ def test_config_defaults():
     print("ENV LANCE_DB_DIR:", os.environ.get("LANCE_DB_DIR"))
     print("CONFIG DB DIR:", config.db_dir)
     from aw_vision.settings import settings_store
-    print("SETTINGS STORE DB CONNECTION:", settings_store._db_conn)
+    print("SETTINGS STORE KV TABLE:", settings_store._kv.table_name)
     print("SETTINGS STORE CACHE:", settings_store._cache)
     print("SETTINGS INTERVAL SECONDS:", settings_store.get("screenshot_interval_seconds"))
     assert config.screenshot_interval == 60
