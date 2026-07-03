@@ -69,4 +69,6 @@ fileignoreconfig:
   checksum: a1af550bbc9ee735738c7fb9ea9d2c96ec4dfb05dbbaa171005e5dc595a34d2a
 - filename: aw_vision/kvstore.py
   checksum: 9a59e977be18e36a149bc04f2244497da48cd61a0c81e5c0b60a7c0fa833ab4a
+- filename: tests/test_models.py
+  checksum: 4a26af3e7038134fdcede6f6af4fa0bcb7cb49b6491b0d31faf27cf91e864269
 version: ""
