@@ -87,6 +87,33 @@ aw-vision/
 └── tests/                   # Automated unit and integration tests
 ```
 
+### Architecture at a Glance (C4 Containers):
+
+```mermaid
+C4Container
+    title aw-vision — Container view
+    Person(user, "User", "Single local user")
+    System_Boundary(awv, "aw-vision") {
+        Container(api, "Backend service", "FastAPI/uvicorn :5666", "HTTP API, ReAct agent, serves built SPA; hosts watcher + batch processor threads (split planned, ADR-0004)")
+        Container(spa, "Web UI", "React + Vite + Tailwind", "Gallery, lightbox, agent chat, settings")
+        ContainerDb(lance, "LanceDB", "Embedded", "screenshots vector table + settings/prompts/skills/mcp tables")
+        ContainerDb(fs, "Screenshot store", "Filesystem", "raw/ ingestion queue, processed/ archive")
+    }
+    System_Ext(ollama, "Ollama", "Local models: OCR, vision, embeddings, agent")
+    System_Ext(gemini, "Gemini API", "Optional cloud provider (opt-in)")
+    System_Ext(aw, "aw-server", "ActivityWatch core :5600 (AFK + buckets)")
+    Rel(user, spa, "Uses")
+    Rel(spa, api, "REST + SSE")
+    Rel(api, lance, "Reads/writes")
+    Rel(api, fs, "Captures/archives")
+    Rel(api, ollama, "HTTP")
+    Rel(api, gemini, "HTTPS (only when enabled)")
+    Rel(api, aw, "AFK checks, bucket mirror")
+```
+
+### Architecture Decision Records:
+Long-lived decisions live in `docs/adr/` (one page each; see `0000-template.md`). Before re-designing something fundamental (datastore, tool protocol, process topology, encryption), **read the matching ADR first** — and when you make such a decision, add or supersede an ADR in the same PR. Never re-litigate an Accepted ADR silently.
+
 ### Module Responsibilities:
 1. **`config.py`**: Reads and structures parameters from `config.toml` (or env variables) such as Ollama hosts, model configurations, and storage directories.
 2. **`settings.py`**: Runtime-tunable settings (provider, models, intervals) persisted in LanceDB; sensitive values are AES-256 encrypted with a hardware-derived key.
@@ -102,7 +129,19 @@ aw-vision/
 ## 4. Designing for Future AI Generated Code
 
 * **Decomposed File Footprints**: Keep individual source files under **300 lines (max 400 lines)**. Decomposed modules are easier to load, parse, and reason about inside LLM context windows, reducing token costs and code-generation errors.
+  * **Enforced by ratchet**: the `check-file-budget` pre-commit hook fails any staged `.py/.ts/.tsx` file above 400 lines. Pre-existing violators are grandfathered in `scripts/file_budget_baseline.json` at their current size and **may only shrink** — extract new code into focused modules instead of growing them. Raising a baseline number requires explicit human sign-off in review.
 * **Reuse High-Quality Libraries**: Do not reinvent the wheel. Before writing complex bespoke algorithms (e.g., custom markdown formatters or local task schedulers), search for a mature, well-tested Python library (like `pyyaml` or `apscheduler`) and add it to the Poetry workspace dependencies.
+
+### Testing Strategy:
+* **Isolation**: Tests must never touch the real database or screenshots. Set `LANCE_DB_DIR` to a temp path **before any `aw_vision` import** (existing test modules show the pattern) — module-level singletons connect on import.
+* **No live model calls in tests**: mock `subprocess`, `requests`/HTTP and Ollama/Gemini clients. Anything that needs a running model is a manual V&V step (§8), not a unit test.
+* **New modules ship with tests** covering their happy path and failure semantics; store-like classes must test persistence across a fresh instance.
+* **Machine-independence**: never assert on state the developer machine controls (e.g. a populated skills directory) — scope assertions to what the test created.
+
+### Logging & Error-Handling Policy:
+* Failures that would corrupt or silently skip user data (DB commits, schema migrations, label updates) must **surface loudly** — raise or record to a status field the UI shows. Never swallow these.
+* Best-effort enrichment (MCP context, skills injection, neighbor lookups, mirrors to aw-server) may degrade silently but must log the cause once, prefixed with its subsystem tag (e.g. `[MCP]`, `[Skills]`).
+* Prefer per-record `log_step` for pipeline progress (journald + UI logs); module-tagged prints elsewhere until structured logging lands. Do not add bare `except: pass` — always name the exception and the consequence.
 
 ---
 
@@ -167,7 +206,8 @@ This repository enforces static code quality and safety rules before any git com
 3. **Black & Isort**: Enforces clean styling, PEP8 compliance, and structured imports **exclusively on newly created files**, bypassing legacy code styling.
 4. **Flake8**: Runs standard linting checks across all modified Python code.
 5. **Local Paths References**: Blocks any hardcoded absolute home directories (like `/home/<user>/` or `/Users/<user>/`), forcing the use of relative and portable configurations.
-6. **Project Prefix Checker**: Confirms that commit messages begin with a standard bracketed project reference (e.g., `[PRJ-2026-042] description`).
+6. **File Budget Ratchet**: Fails source files above the 400-line budget; grandfathered files (see `scripts/file_budget_baseline.json`) may only shrink (AGENTS.md §4).
+7. **Project Prefix Checker**: Confirms that commit messages begin with a standard bracketed project reference (e.g., `[PRJ-2026-042] description`).
 
 ### Setup pre-commit locally:
 Ensure `pre-commit` is installed and registered in your local Git hooks:

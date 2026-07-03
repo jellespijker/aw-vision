@@ -63,4 +63,8 @@ fileignoreconfig:
   checksum: cd599dac865058d243e7e09fb9e3e6787c5693d06b5d111879bb25d8871e8573
 - filename: aw_vision/prompt_eval.py
   checksum: 6b336cb4af9add0b41f94b97ea9cf30dbd373c6abcf6e8ec064aa2b2023929b4
+- filename: docs/adr/0003-hardware-derived-encryption-key.md
+  checksum: 28d0c4e8697b9b51f5fd44cae1f63a20bda6eeacb2da3adfbbff5e3a0762c7b4
+- filename: docs/adr/0001-lancedb-as-sole-datastore.md
+  checksum: a1af550bbc9ee735738c7fb9ea9d2c96ec4dfb05dbbaa171005e5dc595a34d2a
 version: ""
