@@ -32,6 +32,11 @@ class SkillUploadRequest(BaseModel):
     skill_id: Optional[str] = None
 
 
+class PromptEvalRequest(BaseModel):
+    template: str
+    sample_size: int = 5
+
+
 # ---------------------------------------------------------
 # Pipeline Prompt Endpoints
 # ---------------------------------------------------------
@@ -67,6 +72,33 @@ def reset_prompt(prompt_id: str):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"status": "success", "prompts": prompt_store.list()}
+
+
+# ---------------------------------------------------------
+# Prompt Evaluation Endpoints
+# ---------------------------------------------------------
+
+
+@router.get("/prompts/eval/status")
+def get_prompt_eval_status():
+    """Status and per-record results of the active (or last) prompt evaluation."""
+    from aw_vision.prompt_eval import prompt_evaluator
+
+    return prompt_evaluator.status
+
+
+@router.post("/prompts/{prompt_id}/eval")
+def start_prompt_eval(prompt_id: str, payload: PromptEvalRequest):
+    """Evaluate a candidate classification template against human-verified labels (background job)."""
+    from aw_vision.prompt_eval import prompt_evaluator
+
+    try:
+        status = prompt_evaluator.start(prompt_id, payload.template, sample_size=payload.sample_size)
+        return {"status": "started", "eval": status}
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ---------------------------------------------------------

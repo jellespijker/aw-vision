@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from aw_vision.agent import AIMessage, HumanMessage, agent_app
 from aw_vision.config import config
 from aw_vision.customization_api import router as customization_router
+from aw_vision.models import Snapshot
 from aw_vision.db import db
 from aw_vision.processor import processor
 from aw_vision.watcher import watcher
@@ -99,6 +100,8 @@ class ProjectModel(BaseModel):
 
 class LabelRequest(BaseModel):
     project_number: Optional[str] = None
+    # When true, propagate the label to the contiguous same-app session block.
+    apply_to_session: bool = False
 
 
 class ReprocessRequest(BaseModel):
@@ -280,7 +283,7 @@ def post_query(request: QueryRequest):
 
     try:
         # Run state graph
-        inputs = {"messages": messages}
+        inputs = {"messages": messages, "tool_events": []}
         output = agent_app.invoke(inputs)
 
         # Extract last assistant message
@@ -290,6 +293,7 @@ def post_query(request: QueryRequest):
             return {
                 "response": last_msg.content,
                 "tool_calls": _extract_tool_calls(final_messages),
+                "tool_events": output.get("tool_events", []),
                 "history": [
                     {
                         "role": "user" if isinstance(m, HumanMessage) else "assistant",
@@ -687,8 +691,32 @@ def get_projects_timeline(start_time: float, end_time: float, resolution: str = 
         raise HTTPException(status_code=500, detail=f"Failed to fetch projects timeline: {e}")
 
 
+@app.get("/api/people")
+def get_people(limit: int = 200):
+    """Aggregate the people recognized across all snapshots, with occurrence counts."""
+    try:
+        records = db.get_all_records(limit=100000)
+        counts: dict = {}
+        canonical: dict = {}
+        for r in records:
+            for name in r.get("people") or []:
+                name = str(name).strip()
+                if not name:
+                    continue
+                key = name.lower()
+                canonical.setdefault(key, name)
+                counts[key] = counts.get(key, 0) + 1
+        people = [
+            {"name": canonical[k], "count": c}
+            for k, c in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+        ]
+        return {"people": people[:limit]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to aggregate people: {e}")
+
+
 @app.get("/api/history")
-def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
+def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None, person: Optional[str] = None):
     """Get a paginated list of historical screenshot metadata, merging pending items from raw folder and processed ones from LanceDB, alongside monthly timeline groupings."""
     try:
         import json
@@ -703,23 +731,11 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
                 try:
                     with open(meta_path, "r", encoding="utf-8") as f:
                         meta = json.load(f)
-                    pending_records.append({
-                        "id": meta.get("id"),
-                        "timestamp": float(meta.get("timestamp", 0.0)),
-                        "image_filename": img_path.name,
-                        "window_title": meta.get("window_title", "Unknown"),
-                        "app_name": meta.get("app_name", "Unknown"),
-                        "is_afk": bool(meta.get("is_afk", False)),
-                        "description": "Pending processing...",
-                        "ocr_text": None,
-                        "tags": [],
-                        "project_number": None,
-                        "human_labeled": False,
-                        "is_processed": False,
-                        "unique_things": None,
-                        "user_context": meta.get("user_context"),
-                        "analysis_reasoning": None,
-                    })
+                    pending_records.append(
+                        Snapshot.from_pending_meta(meta, img_path.name).to_api(
+                            is_processed=False, description_override="Pending processing..."
+                        )
+                    )
                 except Exception as e:
                     print(f"Error reading pending metadata {meta_path}: {e}")
         except Exception as e:
@@ -739,28 +755,9 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
         else:
             db_results = db.get_all_records(limit=db_fetch_limit)
 
-        cleaned_db = []
-        for r in db_results:
-            image_path_val = r.get("image_path")
-            cleaned_db.append({
-                "id": r.get("id"),
-                "timestamp": r.get("timestamp"),
-                "image_filename": (os.path.basename(image_path_val) if image_path_val else None),
-                "window_title": r.get("window_title"),
-                "app_name": r.get("app_name"),
-                "is_afk": r.get("is_afk"),
-                "description": r.get("description"),
-                "ocr_text": r.get("ocr_text"),
-                "tags": r.get("tags", []),
-                "project_number": r.get("project_number"),
-                "human_labeled": bool(r.get("human_labeled", False)),
-                "is_processed": True,
-                "distance": r.get("_distance"),  # Only present on semantic searches
-                "unique_things": r.get("unique_things"),
-                "user_context": r.get("user_context"),
-                "analysis_reasoning": r.get("analysis_reasoning"),
-                "classification_confidence": r.get("classification_confidence"),
-            })
+        cleaned_db = [
+            Snapshot.from_lance(r).to_api(distance=r.get("_distance")) for r in db_results
+        ]
 
         # 3. Filter pending if searching (simple case-insensitive substring match)
         if search:
@@ -772,6 +769,15 @@ def get_history(page: int = 1, limit: int = 30, search: Optional[str] = None):
                     p["distance"] = 0.0
                     filtered_pending.append(p)
             pending_records = filtered_pending
+
+        # 3b. Person filter: exact (case-insensitive) match against recognized people
+        if person:
+            person_lower = person.strip().lower()
+            cleaned_db = [
+                r for r in cleaned_db
+                if any(person_lower == str(n).strip().lower() for n in (r.get("people") or []))
+            ]
+            pending_records = []
 
         # 4. Merge and sort globally by timestamp descending
         processed_ids = {r.get("id") for r in cleaned_db if r.get("id")}
@@ -881,26 +887,9 @@ def process_single_screenshot(file_id: str):
         if not record:
             raise HTTPException(status_code=500, detail="Processed successfully but database record not found.")
 
-        image_path_val = record.get("image_path")
-        return {
-            "id": record.get("id"),
-            "timestamp": record.get("timestamp"),
-            "image_filename": (os.path.basename(image_path_val) if image_path_val else None),
-            "window_title": record.get("window_title"),
-            "app_name": record.get("app_name"),
-            "is_afk": record.get("is_afk"),
-            "description": record.get("description"),
-            "ocr_text": record.get("ocr_text"),
-            "tags": record.get("tags", []),
-            "project_number": record.get("project_number"),
-            "human_labeled": bool(record.get("human_labeled", False)),
-            "is_processed": True,
-            "logs": processor.processing_logs.get(file_id, []),
-            "unique_things": record.get("unique_things"),
-            "user_context": record.get("user_context"),
-            "analysis_reasoning": record.get("analysis_reasoning"),
-            "classification_confidence": record.get("classification_confidence"),
-        }
+        payload = Snapshot.from_lance(record).to_api()
+        payload["logs"] = processor.processing_logs.get(file_id, [])
+        return payload
     except HTTPException:
         raise
     except Exception as e:
@@ -923,15 +912,23 @@ def update_snapshot_label(record_id: str, payload: LabelRequest):
             if proj_num == "" or proj_num.lower() in ("none", "unclassified"):
                 proj_num = None
 
-        db.update_project_label(record_id, proj_num, human_labeled=True)
-        updated = db.get_record_by_id(record_id)
+        # Optionally extend the relabel to the whole contiguous same-app session.
+        target_ids = [record_id]
+        if payload.apply_to_session:
+            block = db.get_session_block(record_id)
+            target_ids = [r.get("id") for r in block if r.get("id")] or [record_id]
 
-        if updated:
-            image_path_val = updated.get("image_path")
+        updated_ids = []
+        for rid in target_ids:
+            db.update_project_label(rid, proj_num, human_labeled=True)
+            updated = db.get_record_by_id(rid)
+            if not updated:
+                continue
+            updated_ids.append(rid)
             db_record = {
                 "id": updated.get("id"),
                 "timestamp": updated.get("timestamp"),
-                "image_path": image_path_val,
+                "image_path": updated.get("image_path"),
                 "window_title": updated.get("window_title"),
                 "app_name": updated.get("app_name"),
                 "is_afk": bool(updated.get("is_afk", False)),
@@ -941,13 +938,19 @@ def update_snapshot_label(record_id: str, payload: LabelRequest):
                 "project_number": proj_num,
                 "human_labeled": True,
             }
-            processor.send_to_aw_server(db_record, record_id)
+            processor.send_to_aw_server(db_record, rid)
 
+        updated = db.get_record_by_id(record_id)
         return {
             "status": "success",
-            "message": f"Successfully updated project label for snapshot {record_id} to '{proj_num}' (human_labeled=True).",
+            "message": (
+                f"Updated project label to '{proj_num}' for {len(updated_ids)} snapshot(s)"
+                + (" in the session block" if payload.apply_to_session and len(updated_ids) > 1 else "")
+                + " (human_labeled=True)."
+            ),
             "project_number": proj_num,
             "human_labeled": True,
+            "updated_ids": updated_ids,
             "unique_things": updated.get("unique_things") if updated else None
         }
     except Exception as e:

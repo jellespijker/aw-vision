@@ -11,137 +11,7 @@ from langgraph.graph import END, StateGraph
 
 from aw_vision.config import config
 from aw_vision.db import db
-
-
-def caveman_compress_text(text: str) -> str:
-    """Algorithmically compress text in a caveman style by stripping filler words and duplicate lines."""
-    if not text or text == "N/A":
-        return text
-
-    # Split into lines, normalize whitespace, and filter empty lines
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-
-    # Filter common stop words to make each line dense and terse
-    filler_words = {
-        "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been", "being",
-        "to", "of", "in", "on", "at", "by", "for", "with", "about", "against", "between", "into",
-        "through", "during", "before", "after", "above", "below", "from", "up", "down", "in", "out",
-        "off", "over", "under", "again", "further", "then", "once"
-    }
-
-    compressed_lines = []
-    seen = set()
-    for line in lines:
-        words = line.split()
-        compressed_words = [w for w in words if w.lower() not in filler_words]
-        if compressed_words:
-            compressed_line = " ".join(compressed_words)
-            norm = compressed_line.lower()
-            if norm not in seen:
-                seen.add(norm)
-                compressed_lines.append(compressed_line)
-
-    return " | ".join(compressed_lines)
-
-
-def programmatic_compress_records(raw_result: str, max_full_records: int = 5) -> str:
-    """Programmatically compress a list of formatted records to fit within limits.
-
-    Keeps the first N records in full. For any subsequent records, keeps only the header
-    line (containing timestamp, App, and Window) to provide a compact high-level timeline.
-    """
-    lines = raw_result.splitlines()
-    compressed_lines = []
-    record_count = 0
-    in_sub_fields = False
-    has_records = False
-
-    for line in lines:
-        stripped = line.strip()
-        # Detect records
-        is_header = (
-            stripped.startswith("- [")
-            or stripped.startswith("--- Result")
-            or stripped.startswith("--- Record")
-        )
-        if is_header:
-            has_records = True
-            record_count += 1
-            in_sub_fields = record_count > max_full_records
-            compressed_lines.append(line)
-        elif in_sub_fields:
-            # Skip Desc, OCR, Tags lines for records beyond max_full_records
-            continue
-        else:
-            compressed_lines.append(line)
-
-    if not has_records:
-        # If it's some other tool output (like GitHub/Jira/project config), just truncate to safe size
-        return raw_result[:3000] + "\n\n... [Truncated programmatically to 3000 chars]"
-
-    return "\n".join(compressed_lines)
-
-
-def summarize_tool_result(tool_name: str, raw_result: str) -> str:
-    """Summarize a large tool result into a dense technical overview."""
-    if tool_name == "get_recent_screenshots":
-        prompt = f"""
-You are a highly efficient assistant. Your task is to compress the following list of desktop records into a highly dense chronological timeline of the user's activities.
-Keep only unique, key transitions of active applications, window titles, and specific actions.
-Omit repetitive consecutive records of the same window unless the description or OCR text changes significantly.
-Ensure the output reads as a clear, dense log of what was worked on, so the main agent can directly see the precise timeline of activities.
-Format each unique activity strictly as:
-- [Time] AppName | WindowTitle: Description summary (OCR keywords)
-
-Raw Desktop Records:
-{raw_result[:20000]}
-"""
-    elif tool_name == "search_screenshots_semantic":
-        prompt = f"""
-You are a highly efficient assistant. Your task is to compress the following semantic search results into a highly dense summary of matching events.
-Highlight the most relevant matches, their apps/window titles, descriptions, and any relevant discussion or text found.
-Ensure the main agent gets all the specific, fine-grained details needed to answer the user's query.
-
-Raw Search Results:
-{raw_result[:20000]}
-"""
-    else:
-        prompt = f"""
-You are a highly efficient text-summarization sub-agent.
-Your task is to summarize the following raw tool output from '{tool_name}' into an ultra-dense, structured technical overview.
-Identify key findings, activities, files, applications, or discussion points.
-Format your response using compact bullet points or semicolons. Omit all polite or introductory filler text.
-
-Raw Tool Output:
-{raw_result[:20000]}
-"""
-
-    try:
-        from aw_vision.settings import settings_store
-
-        url = f"{config.ollama_host}/api/generate"
-        payload = {
-            "model": config.vision_model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.1, "num_ctx": settings_store.get_int("ollama_context_size") or 8192},
-            "keep_alive": 0,
-        }
-        resp = requests.post(url, json=payload, timeout=25.0)
-        if resp.status_code == 200:
-            summary = resp.json().get("response", "").strip()
-            if len(summary) >= 50:
-                return f"[Compressed representation of {tool_name} results]\n{summary}"
-            else:
-                print(f"Ollama returned empty or too-short response ({len(summary)} chars). Falling back to programmatic compression.")
-        else:
-            print(f"Ollama returned status {resp.status_code}. Falling back to programmatic compression.")
-    except Exception as e:
-        print(f"Error/timeout in tool result summarizer: {e}. Falling back to programmatic compression.")
-
-    # Programmatic compression fallback
-    compressed = programmatic_compress_records(raw_result, max_full_records=4)
-    return f"[Programmatically compressed to fit context limit]\n{compressed}"
+from aw_vision.tool_summary import caveman_compress_text, summarize_tool_result
 
 
 # ---------------------------------------------------------
@@ -539,6 +409,38 @@ def tool_get_activity_for_timeframe(arg: str) -> str:
     return "\n".join(output)
 
 
+def tool_find_person_moments(name: str) -> str:
+    """Find all snapshots where a specific person was involved (chats, mails, meetings, mentions)."""
+    from aw_vision.db import db
+
+    query = (name or "").strip()
+    if not query:
+        return "Error: provide a person name to search for."
+    query_lower = query.lower()
+    try:
+        records = db.get_all_records(limit=100000)
+        matches = [
+            r for r in records
+            if any(query_lower in str(n).lower() for n in (r.get("people") or []))
+        ]
+        if not matches:
+            return (
+                f"No snapshots list '{query}' as a recognized person. "
+                "Tip: fall back to search_screenshots_semantic with the name as the query."
+            )
+        lines = [f"Found {len(matches)} snapshot(s) involving '{query}' (newest first):"]
+        for r in matches[:25]:
+            ts = datetime.fromtimestamp(r.get("timestamp", 0)).strftime("%Y-%m-%d %H:%M")
+            people = ", ".join(r.get("people") or [])
+            lines.append(
+                f"- [{ts}] {r.get('app_name', 'Unknown')} | {r.get('window_title', 'Unknown')} | "
+                f"Proj: {r.get('project_number') or 'None'} | People: {people} | {r.get('description', '')[:160]}"
+            )
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error searching person moments: {e}"
+
+
 # Export a tool mapping
 TOOLS = {
     "search_screenshots_semantic": tool_search_screenshots_semantic,
@@ -551,65 +453,40 @@ TOOLS = {
     "query_github": tool_query_github,
     "query_jira": tool_query_jira,
     "execute_command": tool_execute_command,
+    "find_person_moments": tool_find_person_moments,
 }
 
 
 # ---------------------------------------------------------
-# Dynamic MCP tools (assigned to the "agent" slot)
+# Unified tool registry (builtins + MCP tools on the "agent" slot)
 # ---------------------------------------------------------
 
 
-def build_mcp_agent_tools() -> dict:
-    """Discover MCP tools assigned to the Ask Memory Agent slot.
+def _wrap_builtin(name: str, fn):
+    from aw_vision.tooling import ToolSpec
 
-    Returns a mapping of LLM-friendly tool name -> descriptor dict. Connection or
-    discovery failures degrade gracefully to an empty mapping so the agent keeps
-    working with its built-in tools.
+    def run(arg: str) -> str:
+        if not arg or arg.strip().lower() == "none":
+            return fn()
+        return fn(arg)
+
+    return ToolSpec(name=name, description=(fn.__doc__ or "").strip(), run=run, source="builtin")
+
+
+def build_agent_toolspecs() -> dict:
+    """The full uniform tool registry for the Ask Memory Agent.
+
+    Builtins and slot-assigned MCP tools are wrapped identically (ToolSpec) so
+    the parse/dispatch/observe path is shared with every other ReAct agent in
+    the system. Discovery failures degrade to builtins only.
     """
-    try:
-        from aw_vision.mcp_manager import mcp_manager
+    from aw_vision.tooling import mcp_tools_for_slot
 
-        pairs = mcp_manager.tools_for_slot("agent")
-    except Exception as e:
-        print(f"[Memory Agent] Failed to load MCP tools: {e}")
-        return {}
+    specs = {name: _wrap_builtin(name, fn) for name, fn in TOOLS.items()}
+    for spec in mcp_tools_for_slot("agent"):
+        specs.setdefault(spec.name, spec)
+    return specs
 
-    tools: dict = {}
-    for cfg, tool in pairs:
-        base = re.sub(r"[^a-zA-Z0-9_]", "_", tool.get("name", "tool")).strip("_").lower() or "tool"
-        name = f"mcp_{base}"
-        if name in tools:
-            # Disambiguate collisions across servers by prefixing the server name.
-            server_slug = re.sub(r"[^a-zA-Z0-9_]", "_", cfg.get("name", "srv")).strip("_").lower()
-            name = f"mcp_{server_slug}_{base}"
-        tools[name] = {
-            "server_id": cfg["id"],
-            "server_name": cfg.get("name", "MCP Server"),
-            "tool_name": tool.get("name"),
-            "schema": tool.get("input_schema") or {},
-            "description": (tool.get("description") or "").strip(),
-        }
-    return tools
-
-
-def _execute_mcp_tool(descriptor: dict, raw_arg: str) -> str:
-    """Translate the agent's single-string argument into MCP tool arguments and call it."""
-    from aw_vision.mcp_manager import mcp_manager
-
-    arguments: dict = {}
-    raw = (raw_arg or "").strip()
-    if raw and raw.lower() != "none":
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                arguments = parsed
-            else:
-                arguments = mcp_manager._build_query_args({"input_schema": descriptor["schema"]}, str(parsed))
-        except (json.JSONDecodeError, ValueError):
-            # Not JSON: treat the whole string as a free-text query argument.
-            arguments = mcp_manager._build_query_args({"input_schema": descriptor["schema"]}, raw)
-
-    return mcp_manager.call_tool(descriptor["server_id"], descriptor["tool_name"], arguments)
 
 # ---------------------------------------------------------
 # LangGraph ReAct Agent State Machine
@@ -619,6 +496,7 @@ def _execute_mcp_tool(descriptor: dict, raw_arg: str) -> str:
 class AgentState(TypedDict):
     messages: Sequence[BaseMessage]
     next_node: str
+    tool_events: list
 
 
 def clean_final_response(text: str) -> str:
@@ -703,17 +581,20 @@ def run_agent_node(state: AgentState) -> AgentState:
         "- query_github(query): Find commits, PRs, or issues on user's GitHub repositories.",
         "- query_jira(jql): Search Jira issues.",
         "- execute_command(command): Execute a whitelisted local command-line tool. Only 'gws' and 'gh' commands are permitted. Dangerous shell syntax (pipes, redirects, etc.) is blocked. Useful for managing email, drive, docs, git repos, or tickets. Example: execute_command(\"gws gmail users messages list --params '{\\\"userId\\\": \\\"me\\\"}'\").",
+        "- find_person_moments(name): Find every snapshot where a specific person was involved (chats, mails, meetings, code reviews, mentions), using the structured people index.",
     ]
 
-    # Append any MCP tools the user assigned to the Ask Memory Agent.
-    mcp_agent_tools = build_mcp_agent_tools()
-    if mcp_agent_tools:
+    # Append any MCP tools the user assigned to the Ask Memory Agent (uniform registry).
+    from aw_vision.tooling import mcp_tools_for_slot
+
+    mcp_specs = mcp_tools_for_slot("agent")
+    if mcp_specs:
         prompt_lines.append("Additionally, these external MCP tools are available (call them exactly as named):")
-        for tname, desc in mcp_agent_tools.items():
-            summary = desc["description"] or "External MCP tool."
+        for spec in mcp_specs:
+            summary = spec.description or "External MCP tool."
             if len(summary) > 160:
                 summary = summary[:160] + "..."
-            prompt_lines.append(f"- {tname}(input): [{desc['server_name']}] {summary}")
+            prompt_lines.append(f"- {spec.name}(input): [{spec.extra.get('server_name', 'MCP')}] {summary}")
         prompt_lines.append(
             "  For MCP tools, the argument after the comma may be a plain search string OR a compact JSON object "
             "of arguments (e.g. CALL_TOOL: mcp_search_issues, {\"jql\": \"project = ABC\"})."
@@ -734,8 +615,10 @@ def run_agent_node(state: AgentState) -> AgentState:
         "",
         "CRITICAL: Always perform 'search_screenshots_semantic' first if the user is asking about past active sessions,",
         "such as browsing website pages, looking for sneakers, reading files, or coding topics.",
-        "CRITICAL: Always perform 'search_screenshots_semantic' first if the user asks about a specific person (e.g., 'Who is Sergii?', 'What did I discuss with Arjen?'),",
-        "specific projects, files, websites, or chat conversations. Do not assume you know them from your pre-trained weights; always search your local computer memory first.",
+        "CRITICAL: If the user asks about a specific person (e.g., 'Who is Sergii?', 'What did I discuss with Arjen?', 'When did I last work with Casper?'),",
+        "call 'find_person_moments' first — it queries the structured people index. Fall back to 'search_screenshots_semantic' when it finds nothing.",
+        "CRITICAL: Always perform 'search_screenshots_semantic' first if the user asks about specific projects, files, websites, or chat conversations.",
+        "Do not assume you know them from your pre-trained weights; always search your local computer memory first.",
         "CRITICAL: If the user's question is scoped to a date or time window (e.g. 'yesterday', 'today', 'this morning', 'last week', 'last 3 days', 'on Monday', or a specific date), you MUST use 'get_activity_for_timeframe' and pass the user's exact time phrase as the argument. Do NOT use 'get_recent_screenshots' for date-scoped questions — it ignores dates and will return the wrong period.",
         "CRITICAL: Use 'get_recent_screenshots' ONLY for open-ended 'what am I doing right now / most recently' questions with no specific date or time window.",
         "CRITICAL: If the user asks for the current time, current date, or current day of the week (e.g. 'what time is it', \"what's today's date\", 'what day is it'), and you do NOT already have a TOOL RESULT for get_current_datetime in this conversation, call it exactly ONCE with 'CALL_TOOL: get_current_datetime, None'. As soon as its TOOL RESULT appears above, answer directly from that result and do NOT call it again.",
@@ -874,20 +757,22 @@ def run_agent_node(state: AgentState) -> AgentState:
 
 
 def run_tools_node(state: AgentState) -> AgentState:
-    """Execute the tool requested by the agent."""
+    """Execute the tool requested by the agent through the unified registry."""
+    from aw_vision.tooling import execute_tool, parse_tool_call
+
     messages = state["messages"]
+    tool_events = list(state.get("tool_events") or [])
     last_message = messages[-1].content
 
-    match = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", last_message)
-    if not match:
+    call = parse_tool_call(last_message)
+    if not call:
         # Fallback
         return {
             "messages": messages + [HumanMessage(content="Tool execution error: Invalid format.")],
             "next_node": "agent",
         }
 
-    tool_name = match.group(1).strip()
-    tool_arg = match.group(2).strip()
+    tool_name, tool_arg = call
 
     # Loop guard: small models tend to re-issue the same tool call instead of answering.
     # If this exact tool+arg was already executed in this conversation, don't run it again —
@@ -897,10 +782,10 @@ def run_tools_node(state: AgentState) -> AgentState:
     total_prior_calls = 0
     for m in messages[:-1]:
         if isinstance(m, AIMessage):
-            pm = re.search(r"CALL_TOOL:\s*(\w+),\s*(.*)", m.content or "")
+            pm = parse_tool_call(m.content or "")
             if pm:
                 total_prior_calls += 1
-                if f"{pm.group(1).strip()}|{pm.group(2).strip()}".strip().lower() == signature:
+                if f"{pm[0]}|{pm[1]}".strip().lower() == signature:
                     prior_identical += 1
     if prior_identical >= 1 or total_prior_calls >= 6:
         nudge = (
@@ -908,30 +793,16 @@ def run_tools_node(state: AgentState) -> AgentState:
             "Do NOT call any tool again. Using the information you already have, write the final, polished "
             "answer to the user now in clean Markdown — no CALL_TOOL line."
         )
-        return {"messages": messages + [HumanMessage(content=nudge)], "next_node": "agent"}
+        return {
+            "messages": messages + [HumanMessage(content=nudge)],
+            "next_node": "agent",
+            "tool_events": tool_events,
+        }
 
-    # Execute the matching tool
-    if tool_name in TOOLS:
-        print(f"Executing Agent Tool: {tool_name} with arg '{tool_arg}'")
-        try:
-            # Special case for None args
-            if tool_arg.lower() == "none" or not tool_arg:
-                result = TOOLS[tool_name]()
-            else:
-                result = TOOLS[tool_name](tool_arg)
-        except Exception as e:
-            result = f"Error executing tool: {e}"
-    else:
-        # Fall back to dynamically-discovered MCP tools assigned to the agent.
-        mcp_agent_tools = build_mcp_agent_tools()
-        if tool_name in mcp_agent_tools:
-            print(f"Executing MCP Agent Tool: {tool_name} with arg '{tool_arg}'")
-            try:
-                result = _execute_mcp_tool(mcp_agent_tools[tool_name], tool_arg)
-            except Exception as e:
-                result = f"Error executing MCP tool: {e}"
-        else:
-            result = f"Tool '{tool_name}' is not registered."
+    # Execute through the unified registry (builtins + agent-slot MCP tools)
+    print(f"Executing Agent Tool: {tool_name} with arg '{tool_arg}'")
+    event = execute_tool(build_agent_toolspecs(), tool_name, tool_arg)
+    result = event.pop("result")
 
     if len(result) > 3000:
         print(f"Tool output length ({len(result)}) exceeds threshold. Summarizing...")
@@ -941,10 +812,12 @@ def run_tools_node(state: AgentState) -> AgentState:
         else:
             result = summary
 
+    tool_events.append(event)
     formatted_result = f"=== TOOL RESULT ({tool_name}) ===\n{result}"
     return {
         "messages": messages + [HumanMessage(content=formatted_result)],
         "next_node": "agent",
+        "tool_events": tool_events,
     }
 
 

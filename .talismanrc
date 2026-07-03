@@ -12,7 +12,7 @@ fileignoreconfig:
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
-  checksum: 3160da43f5b71659e7d976997f77bc3d8e51cde519a7f3fd69d7fb8952d6efac
+  checksum: 96964b8fb1e2e10686ad86f6110bd1aaf61ec87fd480343d9bc49cc221834101
 - filename: frontend/src/App.tsx
   checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
 - filename: frontend/src/components/ProjectsTab.tsx
@@ -24,13 +24,13 @@ fileignoreconfig:
 - filename: frontend/src/components/GalleryTab.tsx
   checksum: 76e79bb0c1d30be10d3a750690b71e6a95bcd11ea1b283d9c8ffefc0198cb9c6
 - filename: frontend/src/components/AgentTab.tsx
-  checksum: 44100fc6c83009e9835edd61fccb672de1def66ad04b95619a46adf5b530e845
+  checksum: c117dd0baf8d485fffb2bf990645cf3b7bc5bbf6a92db98aebd8f2fba9acc08a
 - filename: aw_vision/agent.py
-  checksum: b3c75f25e75d8610791f332041982d9624d066e3533bf677203b474e7b48717f
+  checksum: c9d7e664ca9cb5ed451e59a58b9c7f4e6bd07f7cdd37fc2152e60fe2721758f5
 - filename: frontend/package-lock.json
   checksum: ca2767758ead2cdb15866f3a322a0e6813c79b1f68e03d30d5b32b6d097f9c04
 - filename: aw_vision/settings.py
-  checksum: dfcbbe3727b560e87eb139b6cc2fab848b49d8183c3127904f4bdc0534cb7c7f
+  checksum: aa4a6481499d1fa36a820336d2a1196ab88ad75a230b5380292bd011478a6c1d
 - filename: aw_vision/gemini.py
   checksum: e1fd009f0d8bcc0b4d3849eeb9a964b02be0e50c92d58498520589a94cf2d04d
 - filename: frontend/src/components/SettingsTab.tsx
@@ -40,25 +40,37 @@ fileignoreconfig:
 - filename: frontend/src/components/PipelineTab.tsx
   checksum: 97a1209450bf841ff9a916c2b9d6e94aea7a1b8a18c48b743d831c6fcbb477d4
 - filename: aw_vision/mcp_manager.py
-  checksum: 8c4692a058bf63dbdc5aae28650dec28d692b26b6789a1822d4f02b43629a92a
+  checksum: c3939ce5d7928fa6ee4bb21e4e840d543f198c8aeab2d4b0a0900f0eddc4686c
 - filename: frontend/src/components/McpSettings.tsx
   checksum: 8a0dfac4b664677b2ccbcdf348c49b44fd7ce33fd8ad4aba4743341774c5c2b2
 - filename: aw_vision/gemini/vision.py
   checksum: 4d76e009954759e94e99cd6c2d1892174369700e7f40a7bafd76d60c2b867db3
 - filename: aw_vision/processor/vision_sweep.py
-  checksum: d6075f2b3bfbbbbef4db8187f215c0b65cbfeb2eed2bf2e6d4523646bc790274
+  checksum: 31189c65c6c54b91c29faa668d59ca834a21c7f36edd4c31719b0fc38a70a224
 - filename: frontend/src/components/Sidebar.tsx
   checksum: b0a00955e388d7ce22c863b30ebed849de348e1b5d968e998ec3c3319d55bbbe
 - filename: frontend/src/components/PromptSettings.tsx
   checksum: df501afaa720e44612ca63a323252759c84e67468aac10ef8442d1758a54d7d6
 - filename: aw_vision/skills.py
-  checksum: 14bd90fd1a86e4b04f47d21feee8a3340311e677edd9aae01e9ed656c14160c1
+  checksum: d1ebef211e5c58acda9df08fc60565d75213cfcb93643e007a54a2beb88bc72f
 - filename: aw_vision/prompts.py
   checksum: 0325af9705876cf5d21f5d583dd1241e79b6f409c04f294e26061df8e713d489
 - filename: frontend/src/components/SkillSettings.tsx
   checksum: 193f57dae36105361dcd1c7f1491ed04ceb661c39012b990353beacbd122fb3d
 - filename: aw_vision/processor/history_context.py
   checksum: fc34551c728b1ecd72ed01d217f2259f05eb54fa6a8976a0a288cc43f6426be9
-- filename: tests/test_command_execution.py
-  checksum: c12e86c99bce7e47977fc50c858321fc41806df7aab03e93f1926489457841fa
+- filename: aw_vision/db/screenshots.py
+  checksum: cd599dac865058d243e7e09fb9e3e6787c5693d06b5d111879bb25d8871e8573
+- filename: aw_vision/prompt_eval.py
+  checksum: 6b336cb4af9add0b41f94b97ea9cf30dbd373c6abcf6e8ec064aa2b2023929b4
+- filename: docs/adr/0003-hardware-derived-encryption-key.md
+  checksum: 28d0c4e8697b9b51f5fd44cae1f63a20bda6eeacb2da3adfbbff5e3a0762c7b4
+- filename: docs/adr/0001-lancedb-as-sole-datastore.md
+  checksum: a1af550bbc9ee735738c7fb9ea9d2c96ec4dfb05dbbaa171005e5dc595a34d2a
+- filename: aw_vision/kvstore.py
+  checksum: 9a59e977be18e36a149bc04f2244497da48cd61a0c81e5c0b60a7c0fa833ab4a
+- filename: tests/test_models.py
+  checksum: 4a26af3e7038134fdcede6f6af4fa0bcb7cb49b6491b0d31faf27cf91e864269
+- filename: aw_vision/tool_summary.py
+  checksum: e27a29dbfd850c15d2ce01a441436194f94e0a55beebd99ca4308980935cbe05
 version: ""

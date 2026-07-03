@@ -40,6 +40,8 @@ def build_embedding_text(record: dict, max_ocr_chars: int = 1200) -> str:
     if max_ocr_chars and len(ocr) > max_ocr_chars:
         ocr = ocr[:max_ocr_chars]
     user_context = (record.get("user_context") or "").strip()
+    people = record.get("people") or []
+    people_str = ", ".join(str(p).strip() for p in people if p and str(p).strip()) if isinstance(people, list) else ""
 
     lines = []
     if app_name:
@@ -52,6 +54,8 @@ def build_embedding_text(record: dict, max_ocr_chars: int = 1200) -> str:
         lines.append(f"Tags: {tags_str}")
     if user_context:
         lines.append(f"User Notes: {user_context}")
+    if people_str:
+        lines.append(f"People: {people_str}")
     lines.append(f"Description: {description}")
     lines.append(f"Extracted Screen Text: {ocr}")
     return "\n".join(lines)

@@ -21,6 +21,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from aw_vision.config import config
+from aw_vision.kvstore import LanceKVStore
 from aw_vision.settings import decrypt_value, encrypt_value
 
 # ---------------------------------------------------------------------------
@@ -96,55 +97,22 @@ class MCPStore:
     """Persist MCP server configurations in LanceDB, encrypting the whole blob at rest."""
 
     def __init__(self):
-        self._db_conn = None
-        self._table = None
-        self.table_name = "mcp_servers"
+        self._kv = LanceKVStore("mcp_servers", key_field="id", value_field="blob")
         self._cache: Dict[str, Dict[str, Any]] = {}
         self.load_all()
 
-    @property
-    def db_conn(self):
-        if self._db_conn is None:
-            import lancedb
-
-            self._db_conn = lancedb.connect(config.db_dir)
-        return self._db_conn
-
-    @property
-    def table(self):
-        if self._table is None:
-            conn = self.db_conn
-            if self.table_name in conn.table_names():
-                self._table = conn.open_table(self.table_name)
-            else:
-                import pyarrow as pa
-
-                schema = pa.schema(
-                    [
-                        pa.field("id", pa.string(), nullable=False),
-                        pa.field("blob", pa.string(), nullable=False),
-                    ]
-                )
-                self._table = conn.create_table(self.table_name, schema=schema)
-        return self._table
-
     def load_all(self):
         self._cache = {}
-        try:
-            records = self.table.search().limit(1000).to_list()
-            for r in records:
-                blob = r.get("blob")
-                if not blob:
-                    continue
-                try:
-                    decrypted = decrypt_value(blob)
-                    data = json.loads(decrypted) if decrypted else None
-                    if data and data.get("id"):
-                        self._cache[data["id"]] = normalize_server(data)
-                except Exception as e:
-                    print(f"Warning: could not decode MCP server row {r.get('id')}: {e}")
-        except Exception as e:
-            print(f"Warning: could not load MCP servers from LanceDB: {e}")
+        for row_id, blob in self._kv.items(limit=1000).items():
+            if not blob:
+                continue
+            try:
+                decrypted = decrypt_value(blob)
+                data = json.loads(decrypted) if decrypted else None
+                if data and data.get("id"):
+                    self._cache[data["id"]] = normalize_server(data)
+            except Exception as e:
+                print(f"Warning: could not decode MCP server row {row_id}: {e}")
 
     def list(self) -> List[Dict[str, Any]]:
         return [dict(v) for v in self._cache.values()]
@@ -162,25 +130,13 @@ class MCPStore:
                 cfg["auth_token"] = existing.get("auth_token", "")
         self._cache[cfg["id"]] = cfg
 
-        try:
-            blob = encrypt_value(json.dumps(cfg))
-            tbl = self.table
-            try:
-                tbl.delete(f"id = '{cfg['id']}'")
-            except Exception:
-                pass
-            tbl.add([{"id": cfg["id"], "blob": blob}])
-        except Exception as e:
-            print(f"Error persisting MCP server '{cfg['id']}': {e}")
+        self._kv.upsert(cfg["id"], encrypt_value(json.dumps(cfg)))
         return cfg
 
     def delete(self, server_id: str) -> bool:
         existed = server_id in self._cache
         self._cache.pop(server_id, None)
-        try:
-            self.table.delete(f"id = '{server_id}'")
-        except Exception as e:
-            print(f"Error deleting MCP server '{server_id}': {e}")
+        self._kv.delete(server_id)
         return existed
 
 

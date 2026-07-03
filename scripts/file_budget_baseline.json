@@ -1,0 +1,16 @@
+{
+  "_comment": "Grandfathered files exceeding the 400-line budget (AGENTS.md §4) at ratchet introduction. These may only shrink; raising a number requires explicit human sign-off. Remove entries once a file drops below 400 lines.",
+  "aw_vision/agent.py": 880,
+  "aw_vision/mcp_manager.py": 454,
+  "aw_vision/server.py": 1423,
+  "frontend/src/App.tsx": 888,
+  "frontend/src/components/AgentTab.tsx": 606,
+  "frontend/src/components/GalleryTab.tsx": 469,
+  "frontend/src/components/LightboxModal.tsx": 439,
+  "frontend/src/components/McpSettings.tsx": 598,
+  "frontend/src/components/PipelineTab.tsx": 594,
+  "frontend/src/components/ProjectsTab.tsx": 983,
+  "frontend/src/components/ScreenshotCarousel.tsx": 423,
+  "frontend/src/components/SettingsTab.tsx": 992,
+  "tests/test_backend.py": 423
+}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import {
   FileTerminal,
@@ -8,7 +8,11 @@ import {
   ChevronDown,
   ChevronRight,
   Braces,
-  BadgeCheck
+  BadgeCheck,
+  FlaskConical,
+  Check,
+  X,
+  AlertCircle
 } from 'lucide-react'
 
 interface PromptSettingsProps {
@@ -26,16 +30,73 @@ interface PromptDef {
   is_customized: boolean
 }
 
+interface EvalResultRow {
+  id: string
+  window_title: string
+  app_name: string
+  human_project: string | null
+  predicted_project: string | null
+  match_type: string | null
+  match: boolean
+  error: string | null
+}
+
+interface EvalStatus {
+  is_running: boolean
+  prompt_id: string | null
+  total: number
+  completed: number
+  results: EvalResultRow[]
+  accuracy: number | null
+  error: string | null
+}
+
+const EVALUABLE = ['gemini_combined', 'local_synthesis']
+
 export const PromptSettings: React.FC<PromptSettingsProps> = ({ showNotification }) => {
   const [prompts, setPrompts] = useState<PromptDef[]>([])
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState<boolean>(true)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [evalStatus, setEvalStatus] = useState<EvalStatus | null>(null)
+  const evalPollRef = useRef<any>(null)
 
   useEffect(() => {
     loadPrompts()
+    // Pick up an evaluation that may already be running server-side
+    pollEvalStatus()
+    return () => {
+      if (evalPollRef.current) clearInterval(evalPollRef.current)
+    }
   }, [])
+
+  const pollEvalStatus = async () => {
+    try {
+      const resp = await axios.get('/api/prompts/eval/status')
+      const status: EvalStatus = resp.data
+      setEvalStatus(status.prompt_id ? status : null)
+      if (status.is_running && !evalPollRef.current) {
+        evalPollRef.current = setInterval(pollEvalStatus, 2500)
+      } else if (!status.is_running && evalPollRef.current) {
+        clearInterval(evalPollRef.current)
+        evalPollRef.current = null
+      }
+    } catch (e) {
+      console.error('Error polling eval status', e)
+    }
+  }
+
+  const startEval = async (p: PromptDef) => {
+    try {
+      await axios.post(`/api/prompts/${p.id}/eval`, { template: drafts[p.id] || '', sample_size: 5 })
+      showNotification('Evaluation started — reprocessing verified snapshots with the candidate prompt.', 'success')
+      await pollEvalStatus()
+      if (!evalPollRef.current) evalPollRef.current = setInterval(pollEvalStatus, 2500)
+    } catch (e: any) {
+      showNotification(e.response?.data?.detail || 'Failed to start evaluation.', 'danger')
+    }
+  }
 
   const applyPrompts = (list: PromptDef[]) => {
     setPrompts(list)
@@ -172,14 +233,32 @@ export const PromptSettings: React.FC<PromptSettingsProps> = ({ showNotification
                         className="w-full bg-surface-container-lowest border border-surface-container-high p-3 rounded text-technical-sm font-mono text-neutral-dark outline-none focus:border-primary leading-normal"
                       />
                       <div className="flex items-center justify-between">
-                        <button
-                          type="button"
-                          onClick={() => resetPrompt(p)}
-                          disabled={savingId === p.id || (!p.is_customized && !isDirty)}
-                          className="bg-surface-container-lowest hover:bg-surface-container border border-surface-container-high text-neutral-dark font-bold h-9 px-3 rounded flex items-center gap-2 cursor-pointer disabled:opacity-40 text-action-sm"
-                        >
-                          <RotateCcw className="w-3.5 h-3.5" /> Reset to Default
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => resetPrompt(p)}
+                            disabled={savingId === p.id || (!p.is_customized && !isDirty)}
+                            className="bg-surface-container-lowest hover:bg-surface-container border border-surface-container-high text-neutral-dark font-bold h-9 px-3 rounded flex items-center gap-2 cursor-pointer disabled:opacity-40 text-action-sm"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" /> Reset to Default
+                          </button>
+                          {EVALUABLE.includes(p.id) && (
+                            <button
+                              type="button"
+                              title="Reprocess a sample of human-verified snapshots with THIS template (nothing is persisted) and score agreement with your labels"
+                              onClick={() => startEval(p)}
+                              disabled={evalStatus?.is_running || false}
+                              className="bg-accent-surface hover:bg-surface-container text-primary font-bold h-9 px-3 rounded border border-primary/20 flex items-center gap-2 cursor-pointer disabled:opacity-40 text-action-sm"
+                            >
+                              {evalStatus?.is_running && evalStatus.prompt_id === p.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <FlaskConical className="w-3.5 h-3.5" />
+                              )}
+                              Evaluate on Verified Labels
+                            </button>
+                          )}
+                        </div>
                         <button
                           type="button"
                           onClick={() => savePrompt(p)}
@@ -194,6 +273,54 @@ export const PromptSettings: React.FC<PromptSettingsProps> = ({ showNotification
                           Save Prompt
                         </button>
                       </div>
+
+                      {/* Evaluation progress & per-record agreement */}
+                      {evalStatus && evalStatus.prompt_id === p.id && (
+                        <div className="p-3 rounded border border-surface-container-high bg-surface-container-lowest space-y-2">
+                          <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-text-secondary font-messina">
+                            <span className="flex items-center gap-1.5">
+                              <FlaskConical className="w-3.5 h-3.5 text-primary" />
+                              {evalStatus.is_running
+                                ? `Evaluating ${evalStatus.completed}/${evalStatus.total}...`
+                                : `Evaluation complete — ${evalStatus.completed}/${evalStatus.total} snapshots`}
+                            </span>
+                            {evalStatus.accuracy !== null && (
+                              <span className="font-mono text-primary normal-case">
+                                Label agreement: {(evalStatus.accuracy * 100).toFixed(0)}%
+                              </span>
+                            )}
+                          </div>
+                          {evalStatus.error && (
+                            <p className="text-body-sm text-danger-primary flex items-center gap-1.5">
+                              <AlertCircle className="w-4 h-4" /> {evalStatus.error}
+                            </p>
+                          )}
+                          <div className="space-y-1 max-h-48 overflow-y-auto">
+                            {evalStatus.results.map((r) => (
+                              <div
+                                key={r.id}
+                                className="flex items-center gap-2 text-technical-sm font-mono text-neutral-dark"
+                              >
+                                {r.error ? (
+                                  <AlertCircle className="w-3.5 h-3.5 text-danger-primary shrink-0" />
+                                ) : r.match ? (
+                                  <Check className="w-3.5 h-3.5 text-success-green shrink-0" />
+                                ) : (
+                                  <X className="w-3.5 h-3.5 text-danger-primary shrink-0" />
+                                )}
+                                <span className="truncate flex-1" title={r.window_title}>
+                                  {r.app_name} · {r.window_title}
+                                </span>
+                                <span className="text-text-secondary shrink-0">
+                                  {r.error
+                                    ? 'error'
+                                    : `${r.predicted_project || 'None'} vs ${r.human_project || 'None'}`}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

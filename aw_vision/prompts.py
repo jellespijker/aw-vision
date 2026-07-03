@@ -12,7 +12,7 @@ escaping and a user typo can never raise a KeyError mid-pipeline.
 
 from typing import Any, Dict, List, Optional
 
-from aw_vision.config import config
+from aw_vision.kvstore import LanceKVStore
 
 # ---------------------------------------------------------------------------
 # Shared context-block builders
@@ -87,11 +87,12 @@ Perform the following tasks:
 8. Technical tags ('tags'): Generate 3 to 7 highly relevant, technical tags. Reuse these existing database tags VERBATIM when they apply: [{existing_tags}]. New tags must be short technical noun phrases (1-3 words); never emit near-synonyms of an existing tag.
 9. Synthesis ('description'): One ultra-dense, technical "Caveman-style" summary of at most ~50 words. Speak in fragments, use semicolons, omit filler words (the, a, is, was, were, to, of, for). Every concrete identifier from the evidence (files, functions, tickets, URLs) must survive into it verbatim.
    Example: "Dev aw-vision UI. Refactored GalleryTab.tsx list component; unique elements via exact CSS tokens; PR #22 review."
+10. People ('people'): Extract the full names of people visibly involved in this activity: chat/meeting participants, email senders and recipients, commit or review authors, document co-editors, and people substantively mentioned in the visible text. Use the fullest visible form of each name ("Casper Lambo", not "Casper" if the surname is visible), deduplicate, and NEVER include generic labels (You, Me, Unknown, Admin), bot/system accounts, company names, or names you cannot actually read. Output an empty list when no people are visible.
 
 Project Reference Catalog:
 {projects}
 
-You must respond in valid JSON format matching this exact schema (keep the key order — reasoning comes before the decision):
+{tools_block}You must respond in valid JSON format matching this exact schema (keep the key order — reasoning comes before the decision):
 {
   "ocr_text": "string",
   "active_window_description": "string",
@@ -101,7 +102,8 @@ You must respond in valid JSON format matching this exact schema (keep the key o
   "match_type": "direct | thematic | none",
   "project_number": "string",
   "tags": ["string"],
-  "description": "string"
+  "description": "string",
+  "people": ["string"]
 }"""
 )
 
@@ -140,7 +142,7 @@ _LOCAL_SYNTHESIS_DEFAULT = """You are indexing a desktop snapshot for a searchab
 Project Reference Catalog:
 {projects}
 
-Produce exactly five outputs, in this order:
+{tools_block}Produce exactly six outputs, in this order:
 1. project_reasoning: Reason step by step BEFORE deciding. Keep it terse — evidence fragments, not prose, under ~120 words:
    a. List the strongest pieces of evidence (identifiers, file paths, ticket prefixes, repository names, the window title, the user-provided context note when present).
    b. Name the matching catalog candidates and the ruled-out near-misses, each with its deciding evidence.
@@ -151,6 +153,7 @@ Produce exactly five outputs, in this order:
 4. tags: 3 to 7 highly relevant, technical tags/keywords for this task. Reuse these existing database tags VERBATIM when they apply: {existing_tags}. New tags must be short technical noun phrases (1-3 words); never emit near-synonyms of an existing tag.
 5. description: An ultra-dense, highly precise "Caveman-style" work summary of at most ~50 words. Omit filler words (the, a, is, was, were, to, of, for); use dense technical fragments separated by semicolons/periods. Every concrete identifier from the evidence (file names, functions, URLs, tickets) must survive into it verbatim — never replace them with generic activity words.
    Example: "Dev aw-vision UI. Refactored GalleryTab.tsx list component; unique elements via exact CSS tokens; PR #22 review."
+6. people: Extract the full names of people visibly involved in this activity: chat/meeting participants, email senders and recipients, commit or review authors, document co-editors, and people substantively mentioned in the visible text. Use the fullest visible form of each name ("Casper Lambo", not "Casper" if the surname is visible), deduplicate, and NEVER include generic labels (You, Me, Unknown, Admin), bot/system accounts, company names, or names you cannot actually read. Output an empty list when no people are visible.
 
 You must respond in valid JSON format matching this exact schema (keep the key order — reasoning comes before the decision):
 {
@@ -158,7 +161,8 @@ You must respond in valid JSON format matching this exact schema (keep the key o
   "match_type": "direct | thematic | none",
   "project_number": "string (catalog project number, or \\"None\\")",
   "tags": ["string"],
-  "description": "string"
+  "description": "string",
+  "people": ["string"]
 }"""
 
 
@@ -186,6 +190,7 @@ PROMPT_DEFS: List[Dict[str, Any]] = [
             "neighbor_context",
             "similar_snapshots",
             "app_frequencies",
+            "tools_block",
             "ocr_instruction",
             "projects",
             "existing_tags",
@@ -227,6 +232,7 @@ PROMPT_DEFS: List[Dict[str, Any]] = [
             "app_frequencies",
             "mcp_context_block",
             "skills_block",
+            "tools_block",
             "projects",
             "existing_tags",
         ],
@@ -250,46 +256,15 @@ class PromptStore:
     """Persist user-customized prompt templates in LanceDB (plain text)."""
 
     def __init__(self):
-        self._db_conn = None
-        self._table = None
-        self.table_name = "prompts"
+        self._kv = LanceKVStore("prompts")
         self._overrides: Dict[str, str] = {}
         self.load_all()
 
-    @property
-    def db_conn(self):
-        if self._db_conn is None:
-            import lancedb
-
-            self._db_conn = lancedb.connect(config.db_dir)
-        return self._db_conn
-
-    @property
-    def table(self):
-        if self._table is None:
-            conn = self.db_conn
-            if self.table_name in conn.table_names():
-                self._table = conn.open_table(self.table_name)
-            else:
-                import pyarrow as pa
-
-                schema = pa.schema(
-                    [pa.field("key", pa.string(), nullable=False), pa.field("value", pa.string(), nullable=False)]
-                )
-                self._table = conn.create_table(self.table_name, schema=schema)
-        return self._table
-
     def load_all(self):
         self._overrides = {}
-        try:
-            records = self.table.search().limit(100).to_list()
-            for r in records:
-                k = r.get("key")
-                v = r.get("value")
-                if k in VALID_PROMPT_IDS and v:
-                    self._overrides[k] = v
-        except Exception as e:
-            print(f"Warning: Could not load prompt overrides from LanceDB, using defaults. Error: {e}")
+        for k, v in self._kv.items(limit=100).items():
+            if k in VALID_PROMPT_IDS and v:
+                self._overrides[k] = v
 
     def get(self, prompt_id: str) -> str:
         """Return the active template for a prompt (user override or code default)."""
@@ -309,24 +284,13 @@ class PromptStore:
             self.reset(prompt_id)
             return
         self._overrides[prompt_id] = template
-        try:
-            tbl = self.table
-            try:
-                tbl.delete(f"key = '{prompt_id}'")
-            except Exception:
-                pass
-            tbl.add([{"key": prompt_id, "value": template}])
-        except Exception as e:
-            print(f"Error persisting prompt '{prompt_id}' to database: {e}")
+        self._kv.upsert(prompt_id, template)
 
     def reset(self, prompt_id: str):
         if prompt_id not in VALID_PROMPT_IDS:
             raise ValueError(f"Unknown prompt id '{prompt_id}'.")
         self._overrides.pop(prompt_id, None)
-        try:
-            self.table.delete(f"key = '{prompt_id}'")
-        except Exception as e:
-            print(f"Error deleting prompt override '{prompt_id}': {e}")
+        self._kv.delete(prompt_id)
 
     def list(self) -> List[Dict[str, Any]]:
         """Full prompt catalog for the Settings UI."""

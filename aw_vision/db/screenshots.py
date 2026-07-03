@@ -151,6 +151,53 @@ class ScreenshotsMixin:
             print(f"Error updating user context for record {record_id}: {e}")
             raise e
 
+    def get_session_block(self, record_id: str, max_gap_seconds: float = 900.0) -> list[dict]:
+        """Return the contiguous same-application session block containing ``record_id``.
+
+        A session block is the chain of snapshots with the same app_name around the
+        anchor record where consecutive captures are at most ``max_gap_seconds``
+        apart. Used to propagate a human relabel across one continuous stretch of
+        work without touching unrelated activity.
+        """
+        anchor = self.get_record_by_id(record_id)
+        if not anchor:
+            return []
+        app_name = anchor.get("app_name")
+        if not app_name:
+            return [anchor]
+        ts = float(anchor.get("timestamp", 0.0))
+
+        try:
+            escaped_app = app_name.replace("'", "''")
+            # Bound the scan to ±12h around the anchor; sessions never span longer.
+            where = (
+                f"app_name = '{escaped_app}' AND timestamp >= {ts - 43200} AND timestamp <= {ts + 43200}"
+            )
+            candidates = self.query_metadata(where, limit=5000)
+        except Exception as e:
+            print(f"Error fetching session-block candidates for {record_id}: {e}")
+            return [anchor]
+
+        candidates.sort(key=lambda r: r.get("timestamp", 0.0))
+        idx = next((i for i, r in enumerate(candidates) if r.get("id") == record_id), None)
+        if idx is None:
+            return [anchor]
+
+        block = [candidates[idx]]
+        # Walk backwards while the gap stays within the session threshold.
+        for i in range(idx - 1, -1, -1):
+            if block[0].get("timestamp", 0.0) - candidates[i].get("timestamp", 0.0) <= max_gap_seconds:
+                block.insert(0, candidates[i])
+            else:
+                break
+        # Walk forwards likewise.
+        for i in range(idx + 1, len(candidates)):
+            if candidates[i].get("timestamp", 0.0) - block[-1].get("timestamp", 0.0) <= max_gap_seconds:
+                block.append(candidates[i])
+            else:
+                break
+        return block
+
     def get_past_neighbor(self, timestamp: float) -> dict | None:
         """Get the closest snapshot record immediately preceding the given timestamp."""
         try:
