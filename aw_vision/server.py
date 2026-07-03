@@ -1304,10 +1304,15 @@ def get_mcp_slots():
 
 @app.get("/api/mcp/servers")
 def list_mcp_servers():
-    """List all configured MCP servers with secrets masked."""
-    from aw_vision.mcp_manager import mcp_store, mask_server
+    """List all configured MCP servers with secrets masked and live circuit health."""
+    from aw_vision.mcp_manager import mcp_manager, mcp_store, mask_server
 
-    return {"servers": [mask_server(s) for s in mcp_store.list()]}
+    servers = []
+    for cfg in mcp_store.list():
+        masked = mask_server(cfg)
+        masked["health"] = mcp_manager.health(cfg["id"])
+        servers.append(masked)
+    return {"servers": servers}
 
 
 @app.post("/api/mcp/servers")
@@ -1315,8 +1320,13 @@ def save_mcp_server(payload: MCPServerModel):
     """Create or update an MCP server configuration."""
     from aw_vision.mcp_manager import mcp_store, mask_server
 
+    from aw_vision.mcp_manager import mcp_manager
+
     try:
         saved = mcp_store.save(payload.dict(exclude_none=False))
+        # Config changed: drop any persistent session so the next call reconnects.
+        mcp_manager.pool.invalidate(saved["id"])
+        mcp_manager.pool.breaker(saved["id"]).record_success()
         return {"status": "success", "server": mask_server(saved)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save MCP server: {e}")
@@ -1327,7 +1337,10 @@ def delete_mcp_server(server_id: str):
     """Delete an MCP server configuration."""
     from aw_vision.mcp_manager import mcp_store
 
+    from aw_vision.mcp_manager import mcp_manager
+
     existed = mcp_store.delete(server_id)
+    mcp_manager.pool.invalidate(server_id)
     if not existed:
         raise HTTPException(status_code=404, detail="MCP server not found.")
     return {"status": "success", "message": f"Deleted MCP server '{server_id}'."}

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import axios from 'axios'
+import { McpHealthChip, type McpHealth } from './McpHealthChip'
+import { MCP_PRESETS } from './mcpPresets'
 import {
   Plug,
   Plus,
@@ -41,6 +43,7 @@ interface McpServer {
   auth_token?: string
   header_name?: string
   assignments?: string[]
+  health?: McpHealth
 }
 
 interface DiscoveredTool {
@@ -66,30 +69,6 @@ const blankServer = (): McpServer => ({
   assignments: []
 })
 
-const PRESETS: Record<string, Partial<McpServer>> = {
-  github_remote: {
-    name: 'GitHub (Remote)',
-    transport: 'http',
-    url: 'https://api.githubcopilot.com/mcp/',
-    auth_type: 'bearer',
-    auth_token: ''
-  },
-  github_local: {
-    name: 'GitHub (Local)',
-    transport: 'stdio',
-    command: 'docker',
-    args: ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'ghcr.io/github/github-mcp-server'],
-    env: { GITHUB_PERSONAL_ACCESS_TOKEN: '' },
-    auth_type: 'none'
-  },
-  atlassian_remote: {
-    name: 'Atlassian (Remote)',
-    transport: 'sse',
-    url: 'https://mcp.atlassian.com/v1/sse',
-    auth_type: 'bearer',
-    auth_token: ''
-  }
-}
 
 export const McpSettings: React.FC<McpSettingsProps> = ({ showNotification }) => {
   const [slots, setSlots] = useState<Slot[]>([])
@@ -133,7 +112,7 @@ export const McpSettings: React.FC<McpSettingsProps> = ({ showNotification }) =>
 
   const applyPreset = (key: string) => {
     if (!editing || !key) return
-    setEditing({ ...editing, ...PRESETS[key] } as McpServer)
+    setEditing({ ...editing, ...MCP_PRESETS[key] } as McpServer)
   }
 
   const setField = (field: keyof McpServer, value: any) => {
@@ -273,6 +252,7 @@ export const McpSettings: React.FC<McpSettingsProps> = ({ showNotification }) =>
                           {srv.transport === 'stdio' ? <Server className="w-3 h-3" /> : <Globe className="w-3 h-3" />}
                           {srv.transport}
                         </span>
+                        <McpHealthChip health={srv.health} />
                         {srv.auth_type && srv.auth_type !== 'none' && (
                           <span className="text-[10px] font-semibold uppercase tracking-wider font-mono px-2 py-0.5 rounded border border-primary/20 bg-accent-surface text-primary flex items-center gap-1">
                             <Lock className="w-3 h-3" /> {srv.auth_type}

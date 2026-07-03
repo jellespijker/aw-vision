@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from aw_vision.config import config
 from aw_vision.kvstore import LanceKVStore
+from aw_vision.mcp_session import SessionPool
 from aw_vision.settings import decrypt_value, encrypt_value
 
 # ---------------------------------------------------------------------------
@@ -157,20 +158,13 @@ class MCPManager:
         # Cache of discovered tools keyed by a hash of the connection config.
         self._tool_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
         self._tool_cache_ttl = 300.0
+        # Persistent per-server sessions with circuit breaking (mcp_session.py).
+        self.pool = SessionPool(self._open_transport, self._cache_key)
 
-    # -- async plumbing ----------------------------------------------------
-    @staticmethod
-    def _run_async(coro_factory, timeout: float = 30.0):
-        """Run an async coroutine to completion on a private event loop/thread."""
-        import asyncio
+    def health(self, server_id: str) -> Dict[str, Any]:
+        return self.pool.breaker(server_id).health()
 
-        def runner():
-            return asyncio.run(coro_factory())
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(runner)
-            return future.result(timeout=timeout + 5.0)
-
+    # -- persistent session plumbing ----------------------------------------
     @staticmethod
     def _build_headers(cfg: Dict[str, Any]) -> Optional[Dict[str, str]]:
         auth_type = cfg.get("auth_type", "none")
@@ -184,11 +178,9 @@ class MCPManager:
         return None
 
     @classmethod
-    async def _open_session(cls, cfg: Dict[str, Any]):
-        """Async context-manager factory yielding an initialized ClientSession.
-
-        Returns an async generator that must be driven inside a single coroutine.
-        """
+    async def _open_transport(cls, stack, cfg: Dict[str, Any]):
+        """Enter the transport + ClientSession context managers on ``stack`` and
+        return the initialized session (kept alive by the owning SessionWorker)."""
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
@@ -212,46 +204,27 @@ class MCPManager:
                 env=env,
                 cwd=cfg.get("cwd") or None,
             )
-            return ("stdio", params)
-
-        # remote transports
-        if not cfg.get("url"):
-            raise ValueError("Remote MCP server requires a URL.")
-        headers = cls._build_headers(cfg)
-        return (transport, {"url": cfg["url"], "headers": headers})
-
-    @classmethod
-    async def _with_session(cls, cfg: Dict[str, Any], action):
-        """Open a session for cfg, run ``await action(session)``, return result."""
-        from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
-
-        transport = cfg.get("transport", "stdio")
-
-        if transport == "stdio":
-            kind, params = await cls._open_session(cfg)
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    return await action(session)
+            read, write = await stack.enter_async_context(stdio_client(params))
         elif transport == "http":
             from mcp.client.streamable_http import streamablehttp_client
 
-            kind, conn = await cls._open_session(cfg)
-            async with streamablehttp_client(conn["url"], headers=conn["headers"]) as (read, write, _get_sid):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    return await action(session)
+            if not cfg.get("url"):
+                raise ValueError("Remote MCP server requires a URL.")
+            read, write, _get_sid = await stack.enter_async_context(
+                streamablehttp_client(cfg["url"], headers=cls._build_headers(cfg))
+            )
         elif transport == "sse":
             from mcp.client.sse import sse_client
 
-            kind, conn = await cls._open_session(cfg)
-            async with sse_client(conn["url"], headers=conn["headers"]) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    return await action(session)
+            if not cfg.get("url"):
+                raise ValueError("Remote MCP server requires a URL.")
+            read, write = await stack.enter_async_context(sse_client(cfg["url"], headers=cls._build_headers(cfg)))
         else:
             raise ValueError(f"Unknown transport '{transport}'.")
+
+        session = await stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        return session
 
     # -- tool introspection ------------------------------------------------
     @staticmethod
@@ -279,13 +252,17 @@ class MCPManager:
             result = await session.list_tools()
             return [self._serialize_tool(t) for t in result.tools]
 
-        tools = self._run_async(lambda: self._with_session(cfg, action), timeout=timeout)
+        tools = self.pool.call(cfg, action, timeout=timeout)
         self._tool_cache[key] = (time.time(), tools)
         return tools
 
     def test_server(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
-        """Connect to a server and return discovered tools (or an error)."""
+        """Connect to a server and return discovered tools (or an error).
+
+        A successful manual test also closes any tripped circuit so the server
+        immediately rejoins its assigned slots."""
         try:
+            self.pool.breaker(cfg.get("id") or "").record_success()
             tools = self.list_tools(cfg, use_cache=False, timeout=30.0)
             return {"ok": True, "tools": tools, "tool_count": len(tools)}
         except concurrent.futures.TimeoutError:
@@ -326,7 +303,7 @@ class MCPManager:
             return self._stringify_result(result)
 
         try:
-            return self._run_async(lambda: self._with_session(cfg, action), timeout=timeout)
+            return self.pool.call(cfg, action, timeout=timeout)
         except concurrent.futures.TimeoutError:
             return f"Error: MCP tool '{tool_name}' timed out after {timeout:.0f}s."
         except Exception as e:
@@ -334,7 +311,15 @@ class MCPManager:
 
     # -- slot routing ------------------------------------------------------
     def servers_for_slot(self, slot: str) -> List[Dict[str, Any]]:
-        return [cfg for cfg in self.store.list() if cfg.get("enabled", True) and slot in (cfg.get("assignments") or [])]
+        out = []
+        for cfg in self.store.list():
+            if not cfg.get("enabled", True) or slot not in (cfg.get("assignments") or []):
+                continue
+            if self.pool.breaker(cfg["id"]).is_open:
+                print(f"[MCP] Skipping '{cfg.get('name')}' for slot '{slot}': circuit open.")
+                continue
+            out.append(cfg)
+        return out
 
     def tools_for_slot(self, slot: str) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
         """Return (server_cfg, tool) pairs for every tool exposed to ``slot``."""
