@@ -50,6 +50,7 @@ def startup_event():
     # instance that is about to fail — skip the background workers to avoid
     # spurious screenshots from every failing restart cycle.
     our_pid = os.getpid()
+    our_parent = os.getppid()
     our_port = config.server_port
     try:
         for conn in psutil.net_connections(kind="inet"):
@@ -58,7 +59,11 @@ def startup_event():
                 and conn.laddr.port == our_port
                 and conn.status == "LISTEN"
                 and conn.pid
-                and conn.pid != our_pid
+                # Under `uvicorn --reload` the supervisor parent owns the listening
+                # socket; treating it as a duplicate instance silently disabled the
+                # watcher/processor after every hot reload. Our own parent is never
+                # a competing instance.
+                and conn.pid not in (our_pid, our_parent)
             ):
                 print(
                     f"[startup] Port {our_port} already held by PID {conn.pid}. "
