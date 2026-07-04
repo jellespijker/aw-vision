@@ -239,7 +239,9 @@ class VisionSweepMixin:
                             run_react_loop,
                         )
 
-                        syn_tools = mcp_tools_for_slot("local_synthesis")
+                        from aw_vision.skills import skill_tools_for_slot
+
+                        syn_tools = mcp_tools_for_slot("local_synthesis") + skill_tools_for_slot("local_synthesis")
                         if syn_tools:
                             self.log_step(
                                 rec_id,

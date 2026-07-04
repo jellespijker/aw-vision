@@ -199,3 +199,46 @@ description: A directory skill bundle on disk.
             # Clean up saved LanceDB state for disk_one_skill and disk_two_skill_dir
             ss.delete("disk_one_skill")
             ss.delete("disk_two_skill_dir")
+
+
+def test_progressive_skill_disclosure_switches_to_index_mode():
+    ss = SkillStore()
+    for s in _uploaded(ss):
+        ss.delete(s["id"])
+
+    original = skills_mod.skill_store
+    skills_mod.skill_store = ss
+    created = []
+    try:
+        # Up to FULL_INJECT_MAX skills: full bodies injected, no read_skill tool.
+        for i in range(skills_mod.FULL_INJECT_MAX):
+            md = f"---\nname: Full Skill {i}\ndescription: D{i}\n---\nBody {i} instructions."
+            saved = ss.save_upload(f"full{i}.md", base64.b64encode(md.encode()).decode())
+            saved["assignments"] = ["agent"]
+            ss.save(saved)
+            created.append(saved["id"])
+        block = skills_mod.skills_context_for_slot("agent")
+        assert "SKILL GUIDANCE" in block and "Body 0 instructions" in block
+        assert skills_mod.skill_tools_for_slot("agent") == []
+
+        # One more skill flips the slot into index mode with the read_skill tool.
+        md = "---\nname: Overflow Skill\ndescription: Rules for overflow.\n---\nOverflow body text."
+        saved = ss.save_upload("overflow.md", base64.b64encode(md.encode()).decode())
+        saved["assignments"] = ["agent"]
+        ss.save(saved)
+        created.append(saved["id"])
+
+        block = skills_mod.skills_context_for_slot("agent")
+        assert "SKILL INDEX" in block
+        assert "Overflow Skill: Rules for overflow." in block
+        assert "Overflow body text" not in block  # bodies are NOT injected in index mode
+
+        tools = skills_mod.skill_tools_for_slot("agent")
+        assert len(tools) == 1 and tools[0].name == "read_skill"
+        loaded = tools[0].run("overflow skill")  # case-insensitive exact name
+        assert "Overflow body text" in loaded
+        assert "no skill named" in tools[0].run("does-not-exist")
+    finally:
+        skills_mod.skill_store = original
+        for sid in created:
+            ss.delete(sid)

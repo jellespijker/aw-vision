@@ -482,8 +482,10 @@ def build_agent_toolspecs() -> dict:
     """
     from aw_vision.tooling import mcp_tools_for_slot
 
+    from aw_vision.skills import skill_tools_for_slot
+
     specs = {name: _wrap_builtin(name, fn) for name, fn in TOOLS.items()}
-    for spec in mcp_tools_for_slot("agent"):
+    for spec in mcp_tools_for_slot("agent") + skill_tools_for_slot("agent"):
         specs.setdefault(spec.name, spec)
     return specs
 
