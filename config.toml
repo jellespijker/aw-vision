@@ -23,3 +23,7 @@ embedding_model = "embeddinggemma"
 host = "127.0.0.1"
 port = 5666
 cors_origins = ["*"]
+
+[customization]
+skills_dir = "~/.gemini/config/skills"
+

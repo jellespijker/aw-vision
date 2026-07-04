@@ -11,137 +11,7 @@ from langgraph.graph import END, StateGraph
 
 from aw_vision.config import config
 from aw_vision.db import db
-
-
-def caveman_compress_text(text: str) -> str:
-    """Algorithmically compress text in a caveman style by stripping filler words and duplicate lines."""
-    if not text or text == "N/A":
-        return text
-
-    # Split into lines, normalize whitespace, and filter empty lines
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-
-    # Filter common stop words to make each line dense and terse
-    filler_words = {
-        "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been", "being",
-        "to", "of", "in", "on", "at", "by", "for", "with", "about", "against", "between", "into",
-        "through", "during", "before", "after", "above", "below", "from", "up", "down", "in", "out",
-        "off", "over", "under", "again", "further", "then", "once"
-    }
-
-    compressed_lines = []
-    seen = set()
-    for line in lines:
-        words = line.split()
-        compressed_words = [w for w in words if w.lower() not in filler_words]
-        if compressed_words:
-            compressed_line = " ".join(compressed_words)
-            norm = compressed_line.lower()
-            if norm not in seen:
-                seen.add(norm)
-                compressed_lines.append(compressed_line)
-
-    return " | ".join(compressed_lines)
-
-
-def programmatic_compress_records(raw_result: str, max_full_records: int = 5) -> str:
-    """Programmatically compress a list of formatted records to fit within limits.
-
-    Keeps the first N records in full. For any subsequent records, keeps only the header
-    line (containing timestamp, App, and Window) to provide a compact high-level timeline.
-    """
-    lines = raw_result.splitlines()
-    compressed_lines = []
-    record_count = 0
-    in_sub_fields = False
-    has_records = False
-
-    for line in lines:
-        stripped = line.strip()
-        # Detect records
-        is_header = (
-            stripped.startswith("- [")
-            or stripped.startswith("--- Result")
-            or stripped.startswith("--- Record")
-        )
-        if is_header:
-            has_records = True
-            record_count += 1
-            in_sub_fields = record_count > max_full_records
-            compressed_lines.append(line)
-        elif in_sub_fields:
-            # Skip Desc, OCR, Tags lines for records beyond max_full_records
-            continue
-        else:
-            compressed_lines.append(line)
-
-    if not has_records:
-        # If it's some other tool output (like GitHub/Jira/project config), just truncate to safe size
-        return raw_result[:3000] + "\n\n... [Truncated programmatically to 3000 chars]"
-
-    return "\n".join(compressed_lines)
-
-
-def summarize_tool_result(tool_name: str, raw_result: str) -> str:
-    """Summarize a large tool result into a dense technical overview."""
-    if tool_name == "get_recent_screenshots":
-        prompt = f"""
-You are a highly efficient assistant. Your task is to compress the following list of desktop records into a highly dense chronological timeline of the user's activities.
-Keep only unique, key transitions of active applications, window titles, and specific actions.
-Omit repetitive consecutive records of the same window unless the description or OCR text changes significantly.
-Ensure the output reads as a clear, dense log of what was worked on, so the main agent can directly see the precise timeline of activities.
-Format each unique activity strictly as:
-- [Time] AppName | WindowTitle: Description summary (OCR keywords)
-
-Raw Desktop Records:
-{raw_result[:20000]}
-"""
-    elif tool_name == "search_screenshots_semantic":
-        prompt = f"""
-You are a highly efficient assistant. Your task is to compress the following semantic search results into a highly dense summary of matching events.
-Highlight the most relevant matches, their apps/window titles, descriptions, and any relevant discussion or text found.
-Ensure the main agent gets all the specific, fine-grained details needed to answer the user's query.
-
-Raw Search Results:
-{raw_result[:20000]}
-"""
-    else:
-        prompt = f"""
-You are a highly efficient text-summarization sub-agent.
-Your task is to summarize the following raw tool output from '{tool_name}' into an ultra-dense, structured technical overview.
-Identify key findings, activities, files, applications, or discussion points.
-Format your response using compact bullet points or semicolons. Omit all polite or introductory filler text.
-
-Raw Tool Output:
-{raw_result[:20000]}
-"""
-
-    try:
-        from aw_vision.settings import settings_store
-
-        url = f"{config.ollama_host}/api/generate"
-        payload = {
-            "model": config.vision_model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.1, "num_ctx": settings_store.get_int("ollama_context_size") or 8192},
-            "keep_alive": 0,
-        }
-        resp = requests.post(url, json=payload, timeout=25.0)
-        if resp.status_code == 200:
-            summary = resp.json().get("response", "").strip()
-            if len(summary) >= 50:
-                return f"[Compressed representation of {tool_name} results]\n{summary}"
-            else:
-                print(f"Ollama returned empty or too-short response ({len(summary)} chars). Falling back to programmatic compression.")
-        else:
-            print(f"Ollama returned status {resp.status_code}. Falling back to programmatic compression.")
-    except Exception as e:
-        print(f"Error/timeout in tool result summarizer: {e}. Falling back to programmatic compression.")
-
-    # Programmatic compression fallback
-    compressed = programmatic_compress_records(raw_result, max_full_records=4)
-    return f"[Programmatically compressed to fit context limit]\n{compressed}"
+from aw_vision.tool_summary import caveman_compress_text, summarize_tool_result
 
 
 # ---------------------------------------------------------
@@ -256,6 +126,93 @@ def tool_query_jira(jql: str) -> str:
     # Since atlassian-mcp-server is registered as lazy loaded, we can mock it here
     # or query a default local Jira configuration if user has one
     return f"Jira Search for '{jql}':\n- Found 0 matching issues in current local context."
+
+
+def tool_execute_command(command: str) -> str:
+    """Execute a whitelisted local command-line tool (such as 'gws' or 'gh') in a secure sandbox."""
+    try:
+        import shlex
+        import shutil
+
+        # Clean command and reject any forbidden characters or shell operators as a defense-in-depth measure
+        cmd_str = (command or "").strip()
+        if not cmd_str:
+            return "Error: Command cannot be empty."
+
+        # Detect dangerous characters that are common in shell injections
+        # Since we run with shell=False, subprocess doesn't interpret them, but shlex.split might
+        # still parse them as arguments. We explicitly block them to enforce strict command-line whitelisting.
+        forbidden_chars = [";", "&&", "||", "|", ">", "<", "`", "$", "\n", "\r"]
+        for char in forbidden_chars:
+            if char in cmd_str:
+                return f"Error: Command contains forbidden shell operator or character '{char}'."
+
+        # Safely split command into arguments using shlex (handles quotes and JSON parameters perfectly)
+        try:
+            args = shlex.split(cmd_str)
+        except Exception as e:
+            return f"Error parsing command arguments: {e}"
+
+        if not args:
+            return "Error: Command resolved to an empty argument list."
+
+        # Extract the base binary name
+        binary = args[0]
+
+        # Restrict strictly to whitelisted commands
+        if binary not in ("gws", "gh"):
+            return f"Error: Command '{binary}' is not whitelisted. Only 'gws' and 'gh' are permitted."
+
+        # Check if the binary is available on the system
+        if not shutil.which(binary):
+            return f"Error: CLI tool '{binary}' is not installed or not in PATH."
+
+        # Build clean environment with only whitelisted environment variables
+        clean_env = {}
+        # Preserving essential PATH and HOME
+        if "PATH" in os.environ:
+            clean_env["PATH"] = os.environ["PATH"]
+        if "HOME" in os.environ:
+            clean_env["HOME"] = os.environ["HOME"]
+
+        # Whitelist other specific auth or config variables
+        for key, value in os.environ.items():
+            if key.startswith("GOOGLE_WORKSPACE_") or key.startswith("GITHUB_") or key.startswith("GH_"):
+                clean_env[key] = value
+
+        # Run command securely with shell=False and 10.0-second timeout
+        res = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            env=clean_env,
+            timeout=10.0,
+            shell=False,
+        )
+
+        # Format stdout and stderr
+        stdout = (res.stdout or "").strip()
+        stderr = (res.stderr or "").strip()
+
+        output = []
+        if res.returncode == 0:
+            if stdout:
+                output.append(stdout)
+            else:
+                output.append(f"Command '{binary}' executed successfully with no stdout.")
+        else:
+            output.append(f"Command '{binary}' failed with exit code {res.returncode}.")
+            if stdout:
+                output.append(f"Stdout:\n{stdout}")
+            if stderr:
+                output.append(f"Stderr:\n{stderr}")
+
+        return "\n".join(output)
+
+    except subprocess.TimeoutExpired:
+        return "Error: Command execution timed out after 10 seconds."
+    except Exception as e:
+        return f"Error executing command: {e}"
 
 
 def tool_get_similar_labeled_snapshots(query: str, limit: int = 5) -> str:
@@ -495,6 +452,7 @@ TOOLS = {
     "aggregate_project_hours": tool_aggregate_project_hours,
     "query_github": tool_query_github,
     "query_jira": tool_query_jira,
+    "execute_command": tool_execute_command,
     "find_person_moments": tool_find_person_moments,
 }
 
@@ -622,6 +580,7 @@ def run_agent_node(state: AgentState) -> AgentState:
         "- aggregate_project_hours(): Return total active hours spent on each project number.",
         "- query_github(query): Find commits, PRs, or issues on user's GitHub repositories.",
         "- query_jira(jql): Search Jira issues.",
+        "- execute_command(command): Execute a whitelisted local command-line tool. Only 'gws' and 'gh' commands are permitted. Dangerous shell syntax (pipes, redirects, etc.) is blocked. Useful for managing email, drive, docs, git repos, or tickets. Example: execute_command(\"gws gmail users messages list --params '{\\\"userId\\\": \\\"me\\\"}'\").",
         "- find_person_moments(name): Find every snapshot where a specific person was involved (chats, mails, meetings, code reviews, mentions), using the structured people index.",
     ]
 
@@ -752,7 +711,7 @@ def run_agent_node(state: AgentState) -> AgentState:
         lower_reply = reply.lower()
         planning_signals = ["step 1", "i'll start by", "i will start by", "first step", "first, i'll", "first, i will", "should check recent", "start with getting recent", "let's start with", "let's start by"]
         if any(sig in lower_reply for sig in planning_signals):
-            for t_name in ["get_activity_for_timeframe", "get_current_datetime", "get_recent_screenshots", "search_screenshots_semantic", "get_active_projects", "aggregate_project_hours", "query_github", "query_jira", "get_similar_labeled_snapshots"]:
+            for t_name in ["get_activity_for_timeframe", "get_current_datetime", "get_recent_screenshots", "search_screenshots_semantic", "get_active_projects", "aggregate_project_hours", "query_github", "query_jira", "get_similar_labeled_snapshots", "execute_command"]:
                 if t_name in reply:
                     arg = "10" if t_name == "get_recent_screenshots" else "None"
                     print(f"[Fallback Parser] Detected planning words and tool '{t_name}'. Automatically appending CALL_TOOL line.")
@@ -763,7 +722,7 @@ def run_agent_node(state: AgentState) -> AgentState:
     if not match:
         # Heuristic fallback 3: Conversational tool call intent like "Let's call get_active_projects" or "I should check search_screenshots_semantic"
         intent_match = re.search(
-            r"(?:call|run|query|check|use|using|execute|retrieve|get|trigger|need to|should|could|can|start with|first)\b.{0,40}\b(get_activity_for_timeframe|get_current_datetime|get_recent_screenshots|search_screenshots_semantic|get_active_projects|aggregate_project_hours|query_github|query_jira|get_similar_labeled_snapshots)\b",
+            r"(?:call|run|query|check|use|using|execute|retrieve|get|trigger|need to|should|could|can|start with|first)\b.{0,40}\b(get_activity_for_timeframe|get_current_datetime|get_recent_screenshots|search_screenshots_semantic|get_active_projects|aggregate_project_hours|query_github|query_jira|get_similar_labeled_snapshots|execute_command)\b",
             reply,
             re.IGNORECASE
         )
@@ -773,7 +732,7 @@ def run_agent_node(state: AgentState) -> AgentState:
             if t_name == "get_recent_screenshots":
                 num_match = re.search(r"\b(\d+)\b", reply[max(0, reply.find(t_name) - 30):reply.find(t_name) + 100])
                 arg = num_match.group(1) if num_match else "10"
-            elif t_name in ["search_screenshots_semantic", "get_similar_labeled_snapshots", "query_github", "query_jira", "get_activity_for_timeframe"]:
+            elif t_name in ["search_screenshots_semantic", "get_similar_labeled_snapshots", "query_github", "query_jira", "get_activity_for_timeframe", "execute_command"]:
                 quotes_match = re.search(r"['\"]([^'\"]+)['\"]", reply[max(0, reply.find(t_name) - 50):reply.find(t_name) + 150])
                 if quotes_match:
                     arg = quotes_match.group(1).strip()
