@@ -9,6 +9,7 @@ from pathlib import Path
 from aw_vision.config import config
 from aw_vision.db import db
 from aw_vision.embedding import build_embedding_text
+from aw_vision.models import Snapshot
 
 
 class BatchMixin:
@@ -212,30 +213,29 @@ class BatchMixin:
                 duration_total = duration_ocr + duration_vision + duration_embedding
                 meta["duration_total"] = duration_total
 
-                # Build database record
-                db_record = {
-                    "id": meta["id"],
-                    "timestamp": float(meta["timestamp"]),
-                    "image_path": str(self.processed_dir / img_path.name),
-                    "window_title": meta.get("window_title", "Unknown"),
-                    "app_name": meta.get("app_name", "Unknown"),
-                    "is_afk": bool(meta.get("is_afk", False)),
-                    "description": description,
-                    "ocr_text": ocr_text,
-                    "tags": tags,
-                    "project_number": project_number,
-                    "human_labeled": False,
-                    "unique_things": meta.get("unique_things"),
-                    "user_context": meta.get("user_context"),
-                    "analysis_reasoning": meta.get("analysis_reasoning"),
-                    "classification_confidence": meta.get("classification_confidence"),
-                    "people": meta.get("people") or [],
-                    "vector": embedding,
-                    "duration_ocr": meta.get("duration_ocr"),
-                    "duration_vision": meta.get("duration_vision"),
-                    "duration_embedding": meta.get("duration_embedding"),
-                    "duration_total": meta.get("duration_total"),
-                }
+                # Build database record through the shared typed model
+                db_record = Snapshot(
+                    id=meta["id"],
+                    timestamp=float(meta["timestamp"]),
+                    image_path=str(self.processed_dir / img_path.name),
+                    window_title=meta.get("window_title", "Unknown"),
+                    app_name=meta.get("app_name", "Unknown"),
+                    is_afk=bool(meta.get("is_afk", False)),
+                    description=description,
+                    ocr_text=ocr_text,
+                    tags=tags,
+                    project_number=project_number,
+                    human_labeled=False,
+                    unique_things=meta.get("unique_things"),
+                    user_context=meta.get("user_context"),
+                    analysis_reasoning=meta.get("analysis_reasoning"),
+                    classification_confidence=meta.get("classification_confidence"),
+                    people=meta.get("people") or [],
+                    duration_ocr=meta.get("duration_ocr"),
+                    duration_vision=meta.get("duration_vision"),
+                    duration_embedding=meta.get("duration_embedding"),
+                    duration_total=meta.get("duration_total"),
+                ).to_lance(embedding)
 
                 # Commit to database
                 self.log_step(rec_id, "Committing record to local LanceDB database...")

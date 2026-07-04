@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from typing import Optional
 
 # Try to use tomllib (Python 3.11+), fallback to custom simple parser or json
 try:
@@ -31,6 +32,9 @@ DEFAULT_CONFIG = {
         "embedding_model": "embeddinggemma",
     },
     "server": {"host": "127.0.0.1", "port": 5666, "cors_origins": ["*"]},
+    "customization": {
+        "skills_dir": "~/.gemini/config/skills",
+    },
 }
 
 
@@ -200,6 +204,20 @@ class Config:
     @property
     def cors_origins(self) -> list:
         return self.settings["server"]["cors_origins"]
+
+    @property
+    def skills_dir(self) -> Optional[Path]:
+        custom_sec = self.settings.get("customization")
+        if not custom_sec or not isinstance(custom_sec, dict):
+            return None
+        raw_path = custom_sec.get("skills_dir")
+        if not raw_path:
+            return None
+        expanded = os.path.expanduser(raw_path)
+        p = Path(expanded)
+        if p.exists() and p.is_dir():
+            return p
+        return None
 
     @property
     def projects_file(self) -> Path:

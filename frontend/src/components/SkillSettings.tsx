@@ -9,7 +9,8 @@ import {
   FileText,
   ChevronDown,
   ChevronRight,
-  RefreshCw
+  RefreshCw,
+  FolderOpen
 } from 'lucide-react'
 
 interface SkillSettingsProps {
@@ -31,6 +32,7 @@ interface Skill {
   filename: string
   assignments: string[]
   updated_at: number
+  source?: 'upload' | 'disk'
 }
 
 const fileToBase64 = (file: File): Promise<string> =>
@@ -167,7 +169,10 @@ export const SkillSettings: React.FC<SkillSettingsProps> = ({ showNotification }
         Upload Claude Skills (a <code className="font-mono text-technical-sm">SKILL.md</code> file or a{' '}
         <code className="font-mono text-technical-sm">.zip</code> bundle containing one) and assign each skill to
         individual pipeline prompts and/or the Ask Memory Agent — exactly like MCP servers. Assigned skills inject
-        their expert instructions into that prompt, steering context extraction and project classification.
+        their expert instructions into that prompt, steering context extraction and project classification. Skills
+        placed in the configured skills directory (<code className="font-mono text-technical-sm">config.toml →
+        customization.skills_dir</code>) are discovered automatically on startup; their content is managed on disk
+        while assignments and the enabled toggle are managed here.
       </p>
 
       {loading ? (
@@ -196,6 +201,14 @@ export const SkillSettings: React.FC<SkillSettingsProps> = ({ showNotification }
                       {skill.filename && (
                         <span className="text-[10px] font-semibold font-mono px-2 py-0.5 rounded border border-surface-container-high bg-surface-container-lowest text-text-secondary flex items-center gap-1">
                           <FileText className="w-3 h-3" /> {skill.filename}
+                        </span>
+                      )}
+                      {skill.source === 'disk' && (
+                        <span
+                          title="Auto-discovered from the configured skills directory; content is managed on disk"
+                          className="text-[10px] font-semibold uppercase tracking-wider font-mono px-2 py-0.5 rounded border border-primary/20 bg-accent-surface text-primary flex items-center gap-1"
+                        >
+                          <FolderOpen className="w-3 h-3" /> Disk
                         </span>
                       )}
                     </div>
@@ -260,22 +273,26 @@ export const SkillSettings: React.FC<SkillSettingsProps> = ({ showNotification }
                     >
                       <Power className="w-4 h-4" />
                     </button>
-                    <button
-                      type="button"
-                      title="Replace skill file"
-                      onClick={() => startUpload(skill.id)}
-                      className="w-8 h-8 rounded border border-surface-container-high text-neutral-dark bg-surface-container-lowest flex items-center justify-center cursor-pointer hover:border-primary"
-                    >
-                      <RefreshCw className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      title="Delete"
-                      onClick={() => deleteSkill(skill)}
-                      className="w-8 h-8 rounded border border-danger-primary/30 text-danger-primary bg-danger-surface/30 flex items-center justify-center cursor-pointer hover:bg-danger-surface"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {skill.source !== 'disk' && (
+                      <>
+                        <button
+                          type="button"
+                          title="Replace skill file"
+                          onClick={() => startUpload(skill.id)}
+                          className="w-8 h-8 rounded border border-surface-container-high text-neutral-dark bg-surface-container-lowest flex items-center justify-center cursor-pointer hover:border-primary"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Delete"
+                          onClick={() => deleteSkill(skill)}
+                          className="w-8 h-8 rounded border border-danger-primary/30 text-danger-primary bg-danger-surface/30 flex items-center justify-center cursor-pointer hover:bg-danger-surface"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

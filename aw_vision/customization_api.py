@@ -131,6 +131,11 @@ def upload_skill(payload: SkillUploadRequest):
     """Upload a Claude Skill file (SKILL.md markdown, or a .zip bundle containing one)."""
     from aw_vision.skills import skill_store
 
+    if payload.skill_id and str(payload.skill_id).startswith("disk_"):
+        raise HTTPException(
+            status_code=400,
+            detail="Disk-discovered skills are read-only here; edit the file in the skills directory instead.",
+        )
     try:
         saved = skill_store.save_upload(payload.filename, payload.content_base64, skill_id=payload.skill_id)
         return {"status": "success", "skill": saved}
@@ -145,9 +150,19 @@ def upload_skill(payload: SkillUploadRequest):
 
 @router.delete("/skills/{skill_id}")
 def delete_skill(skill_id: str):
-    """Delete an uploaded Claude Skill."""
+    """Delete an uploaded Claude Skill (disk-discovered skills are managed on disk)."""
+    from aw_vision.config import config
     from aw_vision.skills import skill_store
 
+    existing = skill_store.get(skill_id)
+    if existing and existing.get("source") == "disk":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This skill is auto-discovered from the skills directory and would reappear "
+                f"on reload. Remove its file from '{config.skills_dir}' instead."
+            ),
+        )
     existed = skill_store.delete(skill_id)
     if not existed:
         raise HTTPException(status_code=404, detail="Skill not found.")

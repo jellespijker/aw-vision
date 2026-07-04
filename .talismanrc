@@ -12,7 +12,7 @@ fileignoreconfig:
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
-  checksum: f9a017fec245859aed098ca531eb01820cc79e32cf63879bbf0d08736a7dc4e5
+  checksum: 96964b8fb1e2e10686ad86f6110bd1aaf61ec87fd480343d9bc49cc221834101
 - filename: frontend/src/App.tsx
   checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
 - filename: frontend/src/components/ProjectsTab.tsx
@@ -52,7 +52,7 @@ fileignoreconfig:
 - filename: frontend/src/components/PromptSettings.tsx
   checksum: df501afaa720e44612ca63a323252759c84e67468aac10ef8442d1758a54d7d6
 - filename: aw_vision/skills.py
-  checksum: 811245ed2bff9f920accbb9e7d540faa5c399c0a3ae79ec9765fa5e98ab8f1c4
+  checksum: d1ebef211e5c58acda9df08fc60565d75213cfcb93643e007a54a2beb88bc72f
 - filename: aw_vision/prompts.py
   checksum: 0325af9705876cf5d21f5d583dd1241e79b6f409c04f294e26061df8e713d489
 - filename: frontend/src/components/SkillSettings.tsx
@@ -69,4 +69,8 @@ fileignoreconfig:
   checksum: a1af550bbc9ee735738c7fb9ea9d2c96ec4dfb05dbbaa171005e5dc595a34d2a
 - filename: aw_vision/kvstore.py
   checksum: 9a59e977be18e36a149bc04f2244497da48cd61a0c81e5c0b60a7c0fa833ab4a
+- filename: tests/test_models.py
+  checksum: 4a26af3e7038134fdcede6f6af4fa0bcb7cb49b6491b0d31faf27cf91e864269
+- filename: aw_vision/tool_summary.py
+  checksum: e27a29dbfd850c15d2ce01a441436194f94e0a55beebd99ca4308980935cbe05
 version: ""
