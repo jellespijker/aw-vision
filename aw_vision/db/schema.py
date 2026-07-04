@@ -77,6 +77,7 @@ class SchemaMixin:
                 pa.field("user_context", pa.string(), nullable=True),
                 pa.field("analysis_reasoning", pa.string(), nullable=True),
                 pa.field("classification_confidence", pa.string(), nullable=True),
+                pa.field("people", pa.list_(pa.string()), nullable=True),
                 pa.field("duration_ocr", pa.float64(), nullable=True),
                 pa.field("duration_vision", pa.float64(), nullable=True),
                 pa.field("duration_embedding", pa.float64(), nullable=True),
@@ -107,6 +108,8 @@ class SchemaMixin:
                     rec["analysis_reasoning"] = None
                 if "classification_confidence" not in rec:
                     rec["classification_confidence"] = None
+                if "people" not in rec:
+                    rec["people"] = None
                 if "duration_ocr" not in rec:
                     rec["duration_ocr"] = None
                 if "duration_vision" not in rec:
@@ -162,6 +165,7 @@ class SchemaMixin:
                     or "user_context" not in schema.names
                     or "analysis_reasoning" not in schema.names
                     or "classification_confidence" not in schema.names
+                    or "people" not in schema.names
                     or "duration_ocr" not in schema.names
                     or "duration_vision" not in schema.names
                     or "duration_embedding" not in schema.names

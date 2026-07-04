@@ -12,7 +12,7 @@ fileignoreconfig:
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
-  checksum: 3160da43f5b71659e7d976997f77bc3d8e51cde519a7f3fd69d7fb8952d6efac
+  checksum: f9a017fec245859aed098ca531eb01820cc79e32cf63879bbf0d08736a7dc4e5
 - filename: frontend/src/App.tsx
   checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
 - filename: frontend/src/components/ProjectsTab.tsx
@@ -24,7 +24,7 @@ fileignoreconfig:
 - filename: frontend/src/components/GalleryTab.tsx
   checksum: 76e79bb0c1d30be10d3a750690b71e6a95bcd11ea1b283d9c8ffefc0198cb9c6
 - filename: frontend/src/components/AgentTab.tsx
-  checksum: 44100fc6c83009e9835edd61fccb672de1def66ad04b95619a46adf5b530e845
+  checksum: c117dd0baf8d485fffb2bf990645cf3b7bc5bbf6a92db98aebd8f2fba9acc08a
 - filename: aw_vision/agent.py
   checksum: c9d7e664ca9cb5ed451e59a58b9c7f4e6bd07f7cdd37fc2152e60fe2721758f5
 - filename: frontend/package-lock.json
@@ -46,7 +46,7 @@ fileignoreconfig:
 - filename: aw_vision/gemini/vision.py
   checksum: 4d76e009954759e94e99cd6c2d1892174369700e7f40a7bafd76d60c2b867db3
 - filename: aw_vision/processor/vision_sweep.py
-  checksum: d6075f2b3bfbbbbef4db8187f215c0b65cbfeb2eed2bf2e6d4523646bc790274
+  checksum: 31189c65c6c54b91c29faa668d59ca834a21c7f36edd4c31719b0fc38a70a224
 - filename: frontend/src/components/Sidebar.tsx
   checksum: b0a00955e388d7ce22c863b30ebed849de348e1b5d968e998ec3c3319d55bbbe
 - filename: frontend/src/components/PromptSettings.tsx
@@ -59,4 +59,8 @@ fileignoreconfig:
   checksum: 193f57dae36105361dcd1c7f1491ed04ceb661c39012b990353beacbd122fb3d
 - filename: aw_vision/processor/history_context.py
   checksum: fc34551c728b1ecd72ed01d217f2259f05eb54fa6a8976a0a288cc43f6426be9
+- filename: aw_vision/db/screenshots.py
+  checksum: cd599dac865058d243e7e09fb9e3e6787c5693d06b5d111879bb25d8871e8573
+- filename: aw_vision/prompt_eval.py
+  checksum: 6b336cb4af9add0b41f94b97ea9cf30dbd373c6abcf6e8ec064aa2b2023929b4
 version: ""

@@ -499,18 +499,26 @@ export default function App() {
     }
   }
 
-  const handleUpdateLabel = async (recordId: string, projectNumber: string | null) => {
+  const handleUpdateLabel = async (recordId: string, projectNumber: string | null, applyToSession = false) => {
     if (!serverOnline) return
     try {
       const resp = await axios.post(`/api/snapshots/${recordId}/label`, {
-        project_number: projectNumber
+        project_number: projectNumber,
+        apply_to_session: applyToSession
       })
       if (resp.status === 200) {
-        setToastMessage({ text: 'Project label updated successfully!', type: 'success' })
+        const updatedIds: string[] = resp.data.updated_ids || [recordId]
+        setToastMessage({
+          text:
+            updatedIds.length > 1
+              ? `Project label applied to ${updatedIds.length} snapshots in this session.`
+              : 'Project label updated successfully!',
+          type: 'success'
+        })
 
         setHistoryRecords((prev) =>
           prev.map((rec) => {
-            if (rec.id === recordId) {
+            if (updatedIds.includes(rec.id)) {
               return {
                 ...rec,
                 project_number: projectNumber,
@@ -624,6 +632,14 @@ export default function App() {
 
   const clearChat = () => {
     setChatMessages([])
+  }
+
+  const searchForPerson = (name: string) => {
+    // Jump to the gallery filtered to every moment involving this person.
+    setLightboxOpen(false)
+    setActiveTab('gallery')
+    setSearchQuery(name)
+    fetchHistory(1, name)
   }
 
   const openImageLightbox = async (rec: HistoryRecord) => {
@@ -825,6 +841,7 @@ export default function App() {
           setExpandedOcrCardId={setExpandedOcrCardId}
           formatTimestamp={formatTimestamp}
           API_BASE={API_BASE}
+          searchForPerson={searchForPerson}
         />
 
         {/* Floating Google Photos-Style Timeline Scrollbar */}

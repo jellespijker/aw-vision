@@ -88,6 +88,7 @@ def run_gemini_combined_ocr_vision(
     app_name: Optional[str] = None,
     window_title: Optional[str] = None,
     history_context: Optional[Dict[str, str]] = None,
+    template_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Perform screenshot OCR and Vision Analysis simultaneously in a single, high-efficiency Gemini multimodal API call."""
     key = settings_store.get("gemini_api_key")
@@ -122,10 +123,17 @@ def run_gemini_combined_ocr_vision(
         else f"Pre-extracted local OCR text is provided: {ocr_text}. You can use or slightly augment/correct this text for 'ocr_text' rather than re-extracting everything from scratch."
     )
 
+    from aw_vision.tooling import extract_json_object, format_tools_block, mcp_tools_for_slot, run_react_loop
+
+    # MCP tools assigned to this slot are exposed as callable ReAct tools using
+    # the same CALL_TOOL protocol as every other agent in the system.
+    tools = mcp_tools_for_slot("gemini_combined")
+
     history = history_context or {}
     prompt = render_prompt(
-        prompt_store.get("gemini_combined"),
+        template_override or prompt_store.get("gemini_combined"),
         {
+            "tools_block": format_tools_block(tools),
             "app_name": app_name or "Unknown",
             "window_title": window_title or "Unknown",
             "user_context_block": build_user_context_block(user_context),
@@ -142,15 +150,24 @@ def run_gemini_combined_ocr_vision(
     )
     contents_parts.append({"text": prompt})
 
-    payload = {"contents": [{"parts": contents_parts}], "generationConfig": {"responseMimeType": "application/json"}}
+    def _gemini_llm(loop_messages, force_json):
+        # First turn carries the images + rendered prompt; later turns replay the
+        # ReAct exchange (model replies and tool observations) as text parts.
+        contents = [{"role": "user", "parts": contents_parts}]
+        for m in loop_messages[1:]:
+            role = "model" if m["role"] == "assistant" else "user"
+            contents.append({"role": role, "parts": [{"text": m["content"]}]})
+        payload = {"contents": contents}
+        if force_json or not tools:
+            payload["generationConfig"] = {"responseMimeType": "application/json"}
+        resp = gemini_request_with_retry("POST", url, json_data=payload, timeout=90.0)
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise RuntimeError("No generation candidates returned by Gemini.")
+        return candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
 
-    resp = gemini_request_with_retry("POST", url, json_data=payload, timeout=90.0)
-    data = resp.json()
-
-    # Parse and extract text from Gemini response structure
-    candidates = data.get("candidates", [])
-    if not candidates:
-        raise RuntimeError("No generation candidates returned by Gemini.")
-
-    text_output = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-    return json.loads(text_output)
+    text_output, tool_events = run_react_loop(_gemini_llm, prompt, tools, max_steps=2)
+    for ev in tool_events:
+        print(f"[Gemini Combined] Tool {ev['tool']}({str(ev['args'])[:80]}) -> {ev['result_preview'][:120]}")
+    return json.loads(extract_json_object(text_output))
