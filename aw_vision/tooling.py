@@ -234,3 +234,105 @@ def run_react_loop(
             }
         )
         steps += 1
+
+
+# ---------------------------------------------------------------------------
+# Native (structured) tool calling — ADR-0006
+# ---------------------------------------------------------------------------
+# Models with tool-capable templates receive real function schemas; their
+# structured calls are normalized back into the canonical CALL_TOOL line so
+# the rest of the system (graph, loop guard, streaming, logs) is untouched.
+# Models without tool support keep the text protocol via runtime fallback.
+
+_STRING_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {"input": {"type": "string", "description": "The tool's single input argument."}},
+    "required": ["input"],
+}
+
+# Runtime capability memo: model -> False once Ollama rejects tools for it.
+_native_tool_support: Dict[str, bool] = {}
+
+
+def to_ollama_tools(tools: List[ToolSpec]) -> List[Dict[str, Any]]:
+    """Render ToolSpecs as Ollama/OpenAI-style function declarations."""
+    out = []
+    for t in tools:
+        schema = t.extra.get("schema") or _STRING_INPUT_SCHEMA
+        if not isinstance(schema, dict) or schema.get("type") != "object":
+            schema = _STRING_INPUT_SCHEMA
+        out.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": (t.description or "")[:1024],
+                    "parameters": schema,
+                },
+            }
+        )
+    return out
+
+
+def normalize_native_call(call: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Convert one structured tool call into the canonical (name, arg_string) pair.
+
+    A single 'input' argument collapses to its plain string; anything richer is
+    passed through as compact JSON (both forms are what execute_tool expects).
+    """
+    fn = call.get("function") or {}
+    name = (fn.get("name") or "").strip()
+    if not name:
+        return None
+    args = fn.get("arguments")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (json.JSONDecodeError, ValueError):
+            return name, args.strip()
+    if not isinstance(args, dict):
+        return name, ""
+    if set(args.keys()) == {"input"}:
+        return name, str(args["input"])
+    return name, json.dumps(args, ensure_ascii=False)
+
+
+def ollama_chat_native(model: str, prompt: str, tools: List[ToolSpec], num_ctx: int, timeout: float = 180.0) -> str:
+    """One Ollama chat turn with native tool schemas, normalized to protocol text.
+
+    Returns the assistant text; if the model made structured tool calls, the
+    first is appended as a canonical CALL_TOOL line. Raises to signal the
+    caller to use the text-protocol path (e.g. template without tool support,
+    memoized per model).
+    """
+    import requests
+
+    from aw_vision.config import config
+
+    if _native_tool_support.get(model) is False:
+        raise RuntimeError(f"model '{model}' has no native tool support (memoized)")
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "tools": to_ollama_tools(tools),
+        "stream": False,
+        "options": {"temperature": 0.1, "num_ctx": num_ctx},
+        "keep_alive": 0,
+    }
+    resp = requests.post(f"{config.ollama_host}/api/chat", json=payload, timeout=timeout)
+    if resp.status_code != 200:
+        body = resp.text[:300]
+        if "does not support tools" in body:
+            _native_tool_support[model] = False
+        raise RuntimeError(f"Ollama chat returned {resp.status_code}: {body}")
+
+    _native_tool_support[model] = True
+    message = resp.json().get("message") or {}
+    content = (message.get("content") or "").strip()
+    for call in message.get("tool_calls") or []:
+        normalized = normalize_native_call(call)
+        if normalized:
+            name, arg = normalized
+            return f"{content}\n\nCALL_TOOL: {name}, {arg or 'None'}".strip()
+    return content

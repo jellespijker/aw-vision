@@ -77,4 +77,6 @@ fileignoreconfig:
   checksum: 3e3c41a4d0e6cc7bc1ec41bb44523284647bef6b638b3d9e665be84635290f76
 - filename: aw_vision/mcp_session.py
   checksum: e25d887653c0f1b6b5f940edb1f64facf3fbc616db4643fbf3b56bc8c6608ee5
+- filename: aw_vision/tooling.py
+  checksum: 81ff37978cc45782423acb2be99a4dd14722b0c28e255216310e4d044d9d39d1
 version: ""

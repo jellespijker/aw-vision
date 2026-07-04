@@ -1,6 +1,6 @@
 # ADR-0005: Transitional dual tool-call representations (ToolCall + ToolEvent)
 
-- **Status:** Accepted (transitional)
+- **Status:** Superseded by ADR-0006 (unified on ToolEvent)
 - **Date:** 2026-07-03
 - **Context links:** PR #23, PR #30, PR #33
 
