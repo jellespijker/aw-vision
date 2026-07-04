@@ -6,6 +6,9 @@ authors = ["Jelle <jelle@jelle.dev>"]
 readme = "README.md"
 packages = [{include = "aw_vision"}]
 
+[tool.poetry.scripts]
+aw-vision-mcp = "aw_vision.mcp_server:main"
+
 [tool.poetry.dependencies]
 python = "^3.10"
 fastapi = ">=0.110.0"
