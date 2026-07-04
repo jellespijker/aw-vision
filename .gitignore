@@ -133,6 +133,7 @@ cygdb
 !**/package.json
 !**/package-lock.json
 !**/tsconfig*.json
+!scripts/file_budget_baseline.json
 projects.json
 projects.json.bak
 !projects.json.example

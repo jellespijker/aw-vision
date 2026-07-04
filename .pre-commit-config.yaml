@@ -57,6 +57,13 @@ repos:
         language: system
         types: [python]
 
+      - id: check-file-budget
+        name: Enforce Decomposed File Budget (ratchet)
+        entry: >-
+          bash -c 'if [ "$SKIP_PRE_COMMIT" = "1" ]; then exit 0; fi; exec python3 scripts/check_file_budget.py "$@"' --
+        language: system
+        files: \.(py|ts|tsx)$
+
       - id: check-local-paths
         name: Check for Local Path References
         entry: >-
