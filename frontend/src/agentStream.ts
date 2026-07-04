@@ -26,40 +26,56 @@ export async function streamAgentQuery(
   const decoder = new TextDecoder()
   let buffer = ''
 
+  const processEvent = (evt: string) => {
+    const line = evt.split('\n').find((l) => l.startsWith('data:'))
+    if (!line) return
+    let data: any
+    try {
+      data = JSON.parse(line.slice(5).trim())
+    } catch {
+      return
+    }
+    if (data.type === 'tool_call') {
+      // Pre-execution: show the call immediately while the tool runs.
+      collected.push({ tool: data.tool, args: data.args, source: 'builtin', result_preview: '' })
+      onToolEvents([...collected])
+    } else if (data.type === 'tool_result') {
+      const ev = { ...data }
+      delete ev.type
+      if (collected.length) collected[collected.length - 1] = { ...collected[collected.length - 1], ...ev }
+      else collected.push(ev)
+      onToolEvents([...collected])
+    } else if (data.type === 'final') {
+      finalResponse = data.response
+      if (Array.isArray(data.tool_events) && data.tool_events.length) {
+        collected.splice(0, collected.length, ...data.tool_events)
+      }
+    } else if (data.type === 'error') {
+      errored = data.detail || 'Unknown agent error'
+    }
+  }
+
   // Parse the SSE byte stream into `data: {...}` events.
   for (;;) {
     const { done, value } = await reader.read()
-    if (done) break
+    if (done) {
+      // Flush decoder on connection end
+      buffer += decoder.decode()
+      break
+    }
     buffer += decoder.decode(value, { stream: true })
     const events = buffer.split('\n\n')
     buffer = events.pop() || ''
     for (const evt of events) {
-      const line = evt.split('\n').find((l) => l.startsWith('data:'))
-      if (!line) continue
-      let data: any
-      try {
-        data = JSON.parse(line.slice(5).trim())
-      } catch {
-        continue
-      }
-      if (data.type === 'tool_call') {
-        // Pre-execution: show the call immediately while the tool runs.
-        collected.push({ tool: data.tool, args: data.args, source: 'builtin', result_preview: '' })
-        onToolEvents([...collected])
-      } else if (data.type === 'tool_result') {
-        const ev = { ...data }
-        delete ev.type
-        if (collected.length) collected[collected.length - 1] = { ...collected[collected.length - 1], ...ev }
-        else collected.push(ev)
-        onToolEvents([...collected])
-      } else if (data.type === 'final') {
-        finalResponse = data.response
-        if (Array.isArray(data.tool_events) && data.tool_events.length) {
-          collected.splice(0, collected.length, ...data.tool_events)
-        }
-      } else if (data.type === 'error') {
-        errored = data.detail || 'Unknown agent error'
-      }
+      processEvent(evt)
+    }
+  }
+
+  // Process any leftover content in the buffer
+  if (buffer.trim()) {
+    const events = buffer.split('\n\n')
+    for (const evt of events) {
+      processEvent(evt)
     }
   }
 
@@ -70,3 +86,4 @@ export async function streamAgentQuery(
   }
   return { response: finalResponse, toolEvents: collected }
 }
+

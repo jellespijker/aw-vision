@@ -513,7 +513,14 @@ def clean_final_response(text: str) -> str:
             # Return everything after the marker
             cleaned = text[match.end():].strip()
             if cleaned:
+                # Also strip any repeated "Assistant:" prefix if generated after marker
+                if cleaned.lower().startswith("assistant:"):
+                    cleaned = cleaned[len("assistant:"):].strip()
                 return cleaned
+
+    # Strip any repeated "Assistant:" prefix at the very beginning of the raw response
+    if text.strip().lower().startswith("assistant:"):
+        text = text.strip()[len("assistant:"):].strip()
 
     # Otherwise, filter out common meta-thought lines
     lines = text.splitlines()
@@ -653,6 +660,9 @@ def run_agent_node(state: AgentState) -> AgentState:
             prompt_lines.append(f"Assistant: {content}")
 
     prompt = "\n".join(prompt_lines)
+    # Append the turn indicator for the assistant so the LLM continues it directly
+    if not prompt.strip().endswith("Assistant:"):
+        prompt = prompt.rstrip() + "\nAssistant:"
 
     agent_provider = settings_store.get("agent_provider")
     agent_model = settings_store.get("agent_model") or ""
