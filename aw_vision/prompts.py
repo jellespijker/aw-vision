@@ -67,7 +67,7 @@ OS window metadata for this capture: application "{app_name}", window title "{wi
     + GROUNDING_RULES
     + """
 
-{external_events}HISTORICAL & TEMPORAL CONTEXT (previously processed snapshots from the local database; use it to disambiguate ambiguous screens and keep classification, terminology and tags consistent over time — it is supporting evidence, the pixels remain primary):
+{external_events}{project_likelihoods}HISTORICAL & TEMPORAL CONTEXT (previously processed snapshots from the local database; use it to disambiguate ambiguous screens and keep classification, terminology and tags consistent over time — it is supporting evidence, the pixels remain primary):
 - ActivityWatch Bucket State: {aw_context}
 - Neighboring Snapshots: {neighbor_context}
 - Historically Similar Snapshots: {similar_snapshots}
@@ -129,7 +129,7 @@ You must respond in valid JSON format matching this schema:
 
 _LOCAL_SYNTHESIS_DEFAULT = """You are indexing a desktop snapshot for a searchable work journal. Use ONLY the evidence below.
 
-{user_context_block}{external_events}- Application (from OS metadata): {app_name}
+{user_context_block}{external_events}{project_likelihoods}- Application (from OS metadata): {app_name}
 - Window Title (from OS metadata): {window_title}
 - Active Window: {active_window_description}
 - Desktop Context: {full_desktop_description}
@@ -217,6 +217,7 @@ PROMPT_DEFS: List[Dict[str, Any]] = [
             "mcp_context_block",
             "skills_block",
             "external_events",
+            "project_likelihoods",
             "aw_context",
             "neighbor_context",
             "similar_snapshots",
@@ -252,6 +253,7 @@ PROMPT_DEFS: List[Dict[str, Any]] = [
         "placeholders": [
             "user_context_block",
             "external_events",
+            "project_likelihoods",
             "app_name",
             "window_title",
             "active_window_description",

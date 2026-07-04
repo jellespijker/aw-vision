@@ -61,6 +61,7 @@ export interface HistoryRecord {
   analysis_reasoning?: string | null
   classification_confidence?: 'direct' | 'thematic' | 'none' | null
   people?: string[]
+  project_likelihoods?: string | null
 }
 
 export interface Project {
