@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from aw_vision.agent import AIMessage, HumanMessage, agent_app
 from aw_vision.config import config
 from aw_vision.customization_api import router as customization_router
+from aw_vision.context_api import router as context_router
 from aw_vision.models import Snapshot
 from aw_vision.db import db
 from aw_vision.processor import processor
@@ -26,6 +27,7 @@ app = FastAPI(
 
 # Pipeline customization routes (editable prompts + Claude Skills)
 app.include_router(customization_router)
+app.include_router(context_router)
 
 # CORS configuration
 app.add_middleware(

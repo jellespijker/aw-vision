@@ -259,6 +259,7 @@ class VisionSweepMixin:
                                 "full_desktop_description": full_desktop_description,
                                 "unique_things": unique_things,
                                 "ocr_text": truncated_ocr,
+                                "external_events": history.get("external_events", ""),
                                 "aw_context": history.get("aw_context", "None"),
                                 "neighbor_context": history.get("neighbor_context", "- Not available."),
                                 "similar_snapshots": history.get("similar_snapshots", "[]"),

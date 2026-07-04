@@ -89,7 +89,15 @@ def build_history_context(meta: Dict[str, Any]) -> Dict[str, str]:
     timestamp = float(meta.get("timestamp", time.time()))
     app_name = meta.get("app_name", "Unknown")
     window_title = meta.get("window_title", "")
+    external = ""
+    try:
+        from aw_vision.context_journal import context_journal
+
+        external = context_journal.build_external_events_block(timestamp)
+    except Exception as e:
+        print(f"[Journal] external-events block failed: {e}")
     return {
+        "external_events": external,
         "aw_context": build_aw_context(meta),
         "neighbor_context": build_neighbor_context(timestamp),
         "similar_snapshots": build_similar_snapshots_context(app_name, window_title),
