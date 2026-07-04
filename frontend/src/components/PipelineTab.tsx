@@ -19,6 +19,7 @@ import {
   Zap
 } from 'lucide-react'
 import type { DaemonStatus, ProcessingStats } from '../types'
+import { ReprocessToggles } from './ReprocessToggles'
 
 interface PipelineTabProps {
   status: DaemonStatus | null
@@ -28,6 +29,8 @@ interface PipelineTabProps {
   setReprocessRange: (val: string) => void
   reprocessOcr: boolean
   setReprocessOcr: (val: boolean) => void
+  reprocessLowConfOnly: boolean
+  setReprocessLowConfOnly: (val: boolean) => void
   reprocessing: boolean
   handleBulkReprocessSidebar: () => void
 }
@@ -40,6 +43,8 @@ export const PipelineTab: React.FC<PipelineTabProps> = ({
   setReprocessRange,
   reprocessOcr,
   setReprocessOcr,
+  reprocessLowConfOnly,
+  setReprocessLowConfOnly,
   reprocessing,
   handleBulkReprocessSidebar
 }) => {
@@ -521,22 +526,12 @@ export const PipelineTab: React.FC<PipelineTabProps> = ({
                   </select>
                 </div>
 
-                <div className="flex items-center gap-2.5 py-1 select-none">
-                  <input
-                    type="checkbox"
-                    id="reprocessOcrCheckbox"
-                    name="reprocessOcrCheckbox"
-                    checked={reprocessOcr}
-                    onChange={(e) => setReprocessOcr(e.target.checked)}
-                    className="w-4 h-4 rounded border-surface-container-high text-primary focus:ring-primary cursor-pointer"
-                  />
-                  <label
-                    htmlFor="reprocessOcrCheckbox"
-                    className="text-body-sm font-medium text-neutral-dark cursor-pointer font-sans"
-                  >
-                    Include full OCR Sweep (Re-extract Text, slow)
-                  </label>
-                </div>
+                <ReprocessToggles
+                  reprocessOcr={reprocessOcr}
+                  setReprocessOcr={setReprocessOcr}
+                  reprocessLowConfOnly={reprocessLowConfOnly}
+                  setReprocessLowConfOnly={setReprocessLowConfOnly}
+                />
 
                 <button
                   type="button"

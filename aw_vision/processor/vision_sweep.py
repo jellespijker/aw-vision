@@ -14,6 +14,30 @@ from aw_vision.prompts import build_mcp_context_block, build_user_context_block,
 from aw_vision.skills import skills_context_for_slot
 
 
+def _full_posterior_json(meta, tags, people):
+    """Posterior including LLM-extracted people/tags, for persistence (None on failure)."""
+    try:
+        import json as _json
+
+        from aw_vision.config import config as _config
+        from aw_vision.context_journal import context_journal
+        from aw_vision.project_likelihood import evidence_model, signal_projects_from_events
+
+        catalog = [p.get("project_number") for p in _config.load_projects()]
+        events = context_journal.events_around(float(meta.get("timestamp", 0.0)))
+        posterior = evidence_model.score(
+            app_name=meta.get("app_name") or "",
+            window_title=meta.get("window_title") or "",
+            people=people,
+            tags=tags,
+            signal_projects=signal_projects_from_events(events, catalog),
+        )
+        return _json.dumps(posterior, ensure_ascii=False) if posterior else None
+    except Exception as e:
+        print(f"[Likelihood] posterior persistence failed: {e}")
+        return None
+
+
 def _normalize_people(value) -> list[str]:
     """Validate the model's people output into a clean, deduplicated list of names."""
     if not isinstance(value, list):
@@ -118,6 +142,9 @@ class VisionSweepMixin:
                             meta["analysis_reasoning"] = (res.get("project_reasoning") or "").strip() or None
                             meta["classification_confidence"] = _normalize_match_type(res.get("match_type"))
                             meta["people"] = _normalize_people(res.get("people"))
+                            meta["project_likelihoods"] = _full_posterior_json(
+                                meta, meta.get("tags") or [], meta.get("people") or []
+                            )
                             meta["vector"] = []  # Generated in Phase 3
                             meta["duration_vision"] = time.time() - vision_start
 
@@ -259,6 +286,8 @@ class VisionSweepMixin:
                                 "full_desktop_description": full_desktop_description,
                                 "unique_things": unique_things,
                                 "ocr_text": truncated_ocr,
+                                "external_events": history.get("external_events", ""),
+                                "project_likelihoods": history.get("project_likelihoods", ""),
                                 "aw_context": history.get("aw_context", "None"),
                                 "neighbor_context": history.get("neighbor_context", "- Not available."),
                                 "similar_snapshots": history.get("similar_snapshots", "[]"),
@@ -321,6 +350,7 @@ class VisionSweepMixin:
                     meta["analysis_reasoning"] = analysis_reasoning
                     meta["classification_confidence"] = classification_confidence
                     meta["people"] = people
+                    meta["project_likelihoods"] = _full_posterior_json(meta, tags, people)
                     meta["duration_vision"] = time.time() - vision_start
 
                     # Persist results to metadata JSON file on disk

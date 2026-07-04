@@ -30,6 +30,7 @@ class Snapshot(BaseModel):
     analysis_reasoning: Optional[str] = None
     classification_confidence: Optional[str] = None
     people: List[str] = Field(default_factory=list)
+    project_likelihoods: Optional[str] = None  # JSON: {project: probability}, top-k
     duration_ocr: Optional[float] = None
     duration_vision: Optional[float] = None
     duration_embedding: Optional[float] = None
@@ -81,6 +82,7 @@ class Snapshot(BaseModel):
             "analysis_reasoning": self.analysis_reasoning,
             "classification_confidence": self.classification_confidence,
             "people": list(self.people),
+            "project_likelihoods": self.project_likelihoods,
         }
 
     def to_lance(self, vector: List[float]) -> Dict[str, Any]:
@@ -90,3 +92,23 @@ class Snapshot(BaseModel):
             record["project_number"] = None
         record["vector"] = vector
         return record
+
+
+class ExternalEvent(BaseModel):
+    """A neutral external-context event (calendar/mail/chat/vcs), provider-agnostic.
+
+    Collectors adapt Google, Microsoft, git or any other provider into this
+    shape (see context_collectors.py); the journal stores and serves it.
+    """
+
+    id: Optional[str] = None
+    source_id: str = ""
+    kind: str = "other"  # calendar | mail | chat | vcs | other
+    provider: str = ""
+    start_ts: float = 0.0
+    end_ts: Optional[float] = None
+    title: str = ""
+    participants: List[str] = Field(default_factory=list)
+    project_hint: Optional[str] = None
+    summary: Optional[str] = None
+    collected_at: float = 0.0

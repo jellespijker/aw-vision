@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from aw_vision.agent import AIMessage, HumanMessage, agent_app
 from aw_vision.config import config
 from aw_vision.customization_api import router as customization_router
+from aw_vision.context_api import router as context_router
 from aw_vision.models import Snapshot
 from aw_vision.db import db
 from aw_vision.processor import processor
@@ -26,6 +27,7 @@ app = FastAPI(
 
 # Pipeline customization routes (editable prompts + Claude Skills)
 app.include_router(customization_router)
+app.include_router(context_router)
 
 # CORS configuration
 app.add_middleware(
@@ -116,6 +118,9 @@ class ReprocessRequest(BaseModel):
     end_time: Optional[float] = None
     reprocess_ocr: bool = False
     all: bool = False
+    # Re-analyze only snapshots the pipeline was unsure about - the ones that
+    # benefit most from insights gained later (new labels, journal events).
+    only_low_confidence: bool = False
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -1038,6 +1043,16 @@ def reprocess_snapshots(payload: ReprocessRequest):
             records = db.get_all_records(limit=payload.limit)
         else:
             raise HTTPException(status_code=400, detail="Must provide ids, limit, start_time/end_time, or set all=True.")
+
+        if payload.only_low_confidence:
+            records = [
+                r for r in records
+                if not r.get("human_labeled")
+                and (
+                    not r.get("project_number")
+                    or (r.get("classification_confidence") or "none") in ("thematic", "none")
+                )
+            ]
 
         if not records:
             return {

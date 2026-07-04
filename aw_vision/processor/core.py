@@ -122,6 +122,15 @@ class BulkProcessor(MonitorMixin, OcrMixin, MirrorMixin, RetentionMixin, VisionS
         except Exception as e:
             print(f"Error in processor tick: {e}")
 
+    def _journal_tick(self):
+        """Collect external context events (calendar/mail/chat/VCS) on each source's schedule."""
+        try:
+            from aw_vision.context_journal import context_journal
+
+            context_journal.run_collection()
+        except Exception as e:
+            print(f"[Journal] tick failed: {e}")
+
     def _retention_tick(self):
         """Periodic storage retention cleanup pass."""
         try:
@@ -142,6 +151,14 @@ class BulkProcessor(MonitorMixin, OcrMixin, MirrorMixin, RetentionMixin, VisionS
             "interval",
             seconds=max(1, config.check_interval),
             id="process_tick",
+            max_instances=1,
+            coalesce=True,
+        )
+        self.scheduler.add_job(
+            self._journal_tick,
+            "interval",
+            minutes=15,
+            id="journal_tick",
             max_instances=1,
             coalesce=True,
         )

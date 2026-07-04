@@ -89,7 +89,36 @@ def build_history_context(meta: Dict[str, Any]) -> Dict[str, str]:
     timestamp = float(meta.get("timestamp", time.time()))
     app_name = meta.get("app_name", "Unknown")
     window_title = meta.get("window_title", "")
+    external = ""
+    likelihood_block = ""
+    try:
+        from aw_vision.context_journal import context_journal
+
+        events = context_journal.events_around(timestamp)
+        external = context_journal.build_external_events_block(timestamp)
+    except Exception as e:
+        events = []
+        print(f"[Journal] external-events block failed: {e}")
+    try:
+        from aw_vision.config import config
+        from aw_vision.project_likelihood import (
+            evidence_model,
+            format_likelihood_block,
+            signal_projects_from_events,
+        )
+
+        catalog = [p.get("project_number") for p in config.load_projects()]
+        prior = evidence_model.score(
+            app_name=app_name,
+            window_title=window_title,
+            signal_projects=signal_projects_from_events(events, catalog),
+        )
+        likelihood_block = format_likelihood_block(prior)
+    except Exception as e:
+        print(f"[Likelihood] prior computation failed: {e}")
     return {
+        "external_events": external,
+        "project_likelihoods": likelihood_block,
         "aw_context": build_aw_context(meta),
         "neighbor_context": build_neighbor_context(timestamp),
         "similar_snapshots": build_similar_snapshots_context(app_name, window_title),

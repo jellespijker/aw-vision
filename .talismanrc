@@ -54,7 +54,7 @@ fileignoreconfig:
 - filename: aw_vision/skills.py
   checksum: d1ebef211e5c58acda9df08fc60565d75213cfcb93643e007a54a2beb88bc72f
 - filename: aw_vision/prompts.py
-  checksum: 0325af9705876cf5d21f5d583dd1241e79b6f409c04f294e26061df8e713d489
+  checksum: 0c59bcc3861da4c23a0e31fdcbfe87e3f2c92dc32a077397ab0807368329ae16
 - filename: frontend/src/components/SkillSettings.tsx
   checksum: 193f57dae36105361dcd1c7f1491ed04ceb661c39012b990353beacbd122fb3d
 - filename: aw_vision/processor/history_context.py
@@ -79,4 +79,16 @@ fileignoreconfig:
   checksum: e25d887653c0f1b6b5f940edb1f64facf3fbc616db4643fbf3b56bc8c6608ee5
 - filename: aw_vision/tooling.py
   checksum: 81ff37978cc45782423acb2be99a4dd14722b0c28e255216310e4d044d9d39d1
+- filename: tests/test_context_journal.py
+  checksum: 947a389c64c070b24b8ffa9a7224b5ecac0184462a62da6225583632816590ce
+- filename: aw_vision/context_collectors.py
+  checksum: 583a4e12b33e7b45a090c4ac66cb67ab43403b1c595c97bcea20a98388a8baa2
+- filename: aw_vision/context_journal.py
+  checksum: 85fcf2b80a4ebe8c30dbb7de269859be0292eb5489dec892ca573a329bdbcc1a
+- filename: frontend/src/components/LikelihoodBars.tsx
+  checksum: 924a3e44dcfae21b0b00fc6ecc6e205be52be6f0a4cf3e1d9ec1a5c7f6dd2fdd
+- filename: tests/test_project_likelihood.py
+  checksum: 4fff9a208388ffa3e1d8bcbc348002093711589df309bd7f817489ef5f6ee6f8
+- filename: aw_vision/project_likelihood.py
+  checksum: 04dcdf1e00431f2307ab5de2a73a355167f91880cf2291523da8f5461e011f3d
 version: ""

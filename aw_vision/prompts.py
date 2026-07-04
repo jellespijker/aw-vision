@@ -47,7 +47,8 @@ GROUNDING_RULES = """GROUNDING RULES (apply to every output field):
 - Report only what is actually legible. Never invent, autocomplete, or "repair" truncated text, URLs, or identifiers.
 - Describe content, not window chrome: skip title bars, scrollbars, docks, and OS decorations unless they carry unique information.
 - If the screen shows a lock screen, screensaver, blank desktop, or paused media with no work content, state that plainly instead of inventing activity.
-- When a user-provided context note is present, it is the highest authority on what was actually being worked on. Use it to disambiguate, but still report what is objectively visible."""
+- When a user-provided context note is present, it is the highest authority on what was actually being worked on. Use it to disambiguate, but still report what is objectively visible.
+- CONCURRENT EXTERNAL EVENTS (calendar/mail/chat/version-control), when present, rank just below the user's note: a meeting or commit at capture time naming a project is DIRECT evidence — especially for meeting screens with little readable text."""
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +67,7 @@ OS window metadata for this capture: application "{app_name}", window title "{wi
     + GROUNDING_RULES
     + """
 
-HISTORICAL & TEMPORAL CONTEXT (previously processed snapshots from the local database; use it to disambiguate ambiguous screens and keep classification, terminology and tags consistent over time — it is supporting evidence, the pixels remain primary):
+{external_events}{project_likelihoods}HISTORICAL & TEMPORAL CONTEXT (previously processed snapshots from the local database; use it to disambiguate ambiguous screens and keep classification, terminology and tags consistent over time — it is supporting evidence, the pixels remain primary):
 - ActivityWatch Bucket State: {aw_context}
 - Neighboring Snapshots: {neighbor_context}
 - Historically Similar Snapshots: {similar_snapshots}
@@ -128,7 +129,7 @@ You must respond in valid JSON format matching this schema:
 
 _LOCAL_SYNTHESIS_DEFAULT = """You are indexing a desktop snapshot for a searchable work journal. Use ONLY the evidence below.
 
-{user_context_block}- Application (from OS metadata): {app_name}
+{user_context_block}{external_events}{project_likelihoods}- Application (from OS metadata): {app_name}
 - Window Title (from OS metadata): {window_title}
 - Active Window: {active_window_description}
 - Desktop Context: {full_desktop_description}
@@ -166,7 +167,36 @@ You must respond in valid JSON format matching this exact schema (keep the key o
 }"""
 
 
+_CONTEXT_NORMALIZER_DEFAULT = """You are a data normalizer. Convert the raw {kind} output below (from "{provider_label}") into neutral activity events. The output may come from ANY provider (Google Workspace, Microsoft 365, GitHub, ...) in any format — JSON, tables or prose; adapt whatever is present.
+
+Rules:
+- Only include real events with a determinable start time. Convert all times to UNIX epoch seconds (start_ts, optional end_ts).
+- title: short and concrete (meeting subject, mail subject, chat thread topic, commit subject).
+- participants: full names or addresses of the humans involved (attendees, senders, recipients, authors). No bots, no rooms.
+- project_hint: any ticket/project keys visible (e.g. PRJ-2026-042, EMB-467), comma-separated.
+- summary: at most one dense sentence, only if the raw data offers substance beyond the title.
+- Never invent events, times, or people that are not in the raw output.
+
+Raw {kind} output:
+{raw_output}
+
+Respond in valid JSON matching exactly:
+{
+  "events": [
+    {"title": "string", "start_ts": 0, "end_ts": 0, "participants": ["string"], "project_hint": "string", "summary": "string"}
+  ]
+}"""
+
+
 PROMPT_DEFS: List[Dict[str, Any]] = [
+    {
+        "id": "context_normalizer",
+        "label": "Context Journal Normalizer",
+        "group": "Context Journal",
+        "description": "Adapts raw calendar/mail/chat/VCS output from ANY provider (Google, Microsoft, GitHub, ...) into neutral journal events. Tune this when adding a new provider whose output shape confuses the default.",
+        "placeholders": ["kind", "provider_label", "raw_output"],
+        "default": _CONTEXT_NORMALIZER_DEFAULT,
+    },
     {
         "id": "gemini_ocr",
         "label": "Gemini OCR",
@@ -186,6 +216,8 @@ PROMPT_DEFS: List[Dict[str, Any]] = [
             "user_context_block",
             "mcp_context_block",
             "skills_block",
+            "external_events",
+            "project_likelihoods",
             "aw_context",
             "neighbor_context",
             "similar_snapshots",
@@ -220,6 +252,8 @@ PROMPT_DEFS: List[Dict[str, Any]] = [
         "description": "Text-only pass that reasons about project classification, generates tags and synthesizes the dense description from all gathered evidence.",
         "placeholders": [
             "user_context_block",
+            "external_events",
+            "project_likelihoods",
             "app_name",
             "window_title",
             "active_window_description",

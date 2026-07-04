@@ -205,6 +205,8 @@ class PromptEvaluator:
                 "full_desktop_description": parsed_v.get("full_desktop_description") or "",
                 "unique_things": parsed_v.get("unique_things") or "",
                 "ocr_text": (rec.get("ocr_text") or "")[:1200],
+                "external_events": history.get("external_events", ""),
+                "project_likelihoods": history.get("project_likelihoods", ""),
                 "aw_context": history.get("aw_context", "None"),
                 "neighbor_context": history.get("neighbor_context", "- Not available."),
                 "similar_snapshots": history.get("similar_snapshots", "[]"),
