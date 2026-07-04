@@ -142,6 +142,7 @@ def run_gemini_combined_ocr_vision(
             "mcp_context_block": build_mcp_context_block(extra_context),
             "skills_block": skills_context_for_slot("gemini_combined"),
             "external_events": history.get("external_events", ""),
+            "project_likelihoods": history.get("project_likelihoods", ""),
             "aw_context": history.get("aw_context", "None"),
             "neighbor_context": history.get("neighbor_context", "- Not available."),
             "similar_snapshots": history.get("similar_snapshots", "[]"),

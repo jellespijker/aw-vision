@@ -30,6 +30,7 @@ class Snapshot(BaseModel):
     analysis_reasoning: Optional[str] = None
     classification_confidence: Optional[str] = None
     people: List[str] = Field(default_factory=list)
+    project_likelihoods: Optional[str] = None  # JSON: {project: probability}, top-k
     duration_ocr: Optional[float] = None
     duration_vision: Optional[float] = None
     duration_embedding: Optional[float] = None
@@ -81,6 +82,7 @@ class Snapshot(BaseModel):
             "analysis_reasoning": self.analysis_reasoning,
             "classification_confidence": self.classification_confidence,
             "people": list(self.people),
+            "project_likelihoods": self.project_likelihoods,
         }
 
     def to_lance(self, vector: List[float]) -> Dict[str, Any]:

@@ -59,6 +59,7 @@ export default function App() {
   const [processingIds, setProcessingIds] = useState<string[]>([])
   const [bulkProcessing, setBulkProcessing] = useState<boolean>(false)
   const [reprocessOcr, setReprocessOcr] = useState<boolean>(false)
+  const [reprocessLowConfOnly, setReprocessLowConfOnly] = useState<boolean>(false)
   const [reprocessRange, setReprocessRange] = useState<string>('last10')
   const [reprocessing, setReprocessing] = useState<boolean>(false)
   const [lightboxViewFull, setLightboxViewFull] = useState<boolean>(false)
@@ -330,10 +331,11 @@ export default function App() {
     endTime?: number
     all?: boolean
     reprocessOcr?: boolean
+    onlyLowConfidence?: boolean
   }): Promise<boolean> => {
     if (!serverOnline) return false
 
-    const { ids, limit, startTime, endTime, all, reprocessOcr = false } = options
+    const { ids, limit, startTime, endTime, all, reprocessOcr = false, onlyLowConfidence = false } = options
     const targetId = ids && ids.length === 1 ? ids[0] : null
 
     if (targetId) {
@@ -368,6 +370,7 @@ export default function App() {
       if (startTime !== undefined) payload.start_time = startTime
       if (endTime !== undefined) payload.end_time = endTime
       if (all !== undefined) payload.all = all
+      if (onlyLowConfidence) payload.only_low_confidence = true
 
       const resp = await axios.post('/api/reprocess', payload)
 
@@ -402,7 +405,7 @@ export default function App() {
   }
 
   const handleBulkReprocessSidebar = async () => {
-    const options: any = { reprocessOcr }
+    const options: any = { reprocessOcr, onlyLowConfidence: reprocessLowConfOnly }
 
     if (reprocessRange === 'all') {
       options.all = true
@@ -754,6 +757,8 @@ export default function App() {
                   reprocessRange={reprocessRange}
                   setReprocessRange={setReprocessRange}
                   reprocessOcr={reprocessOcr}
+                  reprocessLowConfOnly={reprocessLowConfOnly}
+                  setReprocessLowConfOnly={setReprocessLowConfOnly}
                   setReprocessOcr={setReprocessOcr}
                   reprocessing={reprocessing}
                   handleBulkReprocessSidebar={handleBulkReprocessSidebar}

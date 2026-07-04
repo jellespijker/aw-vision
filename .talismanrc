@@ -85,4 +85,10 @@ fileignoreconfig:
   checksum: 583a4e12b33e7b45a090c4ac66cb67ab43403b1c595c97bcea20a98388a8baa2
 - filename: aw_vision/context_journal.py
   checksum: 85fcf2b80a4ebe8c30dbb7de269859be0292eb5489dec892ca573a329bdbcc1a
+- filename: frontend/src/components/LikelihoodBars.tsx
+  checksum: 924a3e44dcfae21b0b00fc6ecc6e205be52be6f0a4cf3e1d9ec1a5c7f6dd2fdd
+- filename: tests/test_project_likelihood.py
+  checksum: 4fff9a208388ffa3e1d8bcbc348002093711589df309bd7f817489ef5f6ee6f8
+- filename: aw_vision/project_likelihood.py
+  checksum: 04dcdf1e00431f2307ab5de2a73a355167f91880cf2291523da8f5461e011f3d
 version: ""

@@ -231,6 +231,7 @@ class BatchMixin:
                     analysis_reasoning=meta.get("analysis_reasoning"),
                     classification_confidence=meta.get("classification_confidence"),
                     people=meta.get("people") or [],
+                    project_likelihoods=meta.get("project_likelihoods"),
                     duration_ocr=meta.get("duration_ocr"),
                     duration_vision=meta.get("duration_vision"),
                     duration_embedding=meta.get("duration_embedding"),
