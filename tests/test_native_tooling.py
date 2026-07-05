@@ -1,10 +1,9 @@
-"""Tests for native tool-call schemas and normalization (ADR-0006)."""
-
+import json
 import os
 
 os.environ.setdefault("LANCE_DB_DIR", "/tmp/test_aw_vision_db")
 
-from aw_vision.tooling import ToolSpec, normalize_native_call, parse_tool_call, to_ollama_tools  # noqa: E402
+from aw_vision.tooling import ToolSpec, normalize_native_call, parse_tool_call, to_ollama_tools, extract_json_object  # noqa: E402
 
 
 def _spec(name, schema=None):
@@ -36,3 +35,16 @@ def test_normalized_line_round_trips_through_protocol_parser():
     name, arg = normalize_native_call({"function": {"name": "search", "arguments": {"input": "purple sneakers"}}})
     reply = f"Some reasoning.\n\nCALL_TOOL: {name}, {arg}"
     assert parse_tool_call(reply) == ("search", "purple sneakers")
+
+
+def test_extract_json_object():
+    # Standard JSON
+    assert json.loads(extract_json_object('{"key": "value"}')) == {"key": "value"}
+    # Wrapped in markdown/prose
+    assert json.loads(extract_json_object('Prose here\n```json\n{"key": "value"}\n```\nMore prose.')) == {"key": "value"}
+    # Python-style single quotes
+    assert json.loads(extract_json_object("{'key': 'value'}")) == {"key": "value"}
+    # Mix of quote replacements
+    assert json.loads(extract_json_object("{'suggestions': [{'name': 'test'}]}")) == {"suggestions": [{"name": "test"}]}
+    # Degraded failure
+    assert extract_json_object("not a json") == "{}"

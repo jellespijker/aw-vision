@@ -12,7 +12,9 @@ fileignoreconfig:
 - filename: aw_vision/processor.py
   checksum: 0607fd9053f3c619202912270e1da30912ae55505afc93f1a983b256b14d28e6
 - filename: aw_vision/server.py
-  checksum: 96964b8fb1e2e10686ad86f6110bd1aaf61ec87fd480343d9bc49cc221834101
+  checksum: 0eb4707322031755e51cc108a5d084da666782406c9d81579a8ae0e3bda023c9
+- filename: tests/test_native_tooling.py
+  checksum: 24c46f76a32ecd85a2d700e31bea03d5a636ea5e08ada376761812e8a63bf2a5
 - filename: frontend/src/App.tsx
   checksum: 516ccbd43984cab3ff874d29123c7c5b3b253c6b472052f1c8a8a3d3682ca6ca
 - filename: frontend/src/components/ProjectsTab.tsx

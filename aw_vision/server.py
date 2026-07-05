@@ -452,26 +452,43 @@ def suggest_projects():
         # 1. Fetch up to 100 recent unclassified screenshots
         where_clause = "project_number IS NULL OR project_number = 'None' OR project_number = ''"
         unclassified = db.query_metadata(where_clause, limit=100)
+        print(f"[Suggest] Found {len(unclassified)} unclassified snapshots in database.")
 
         if not unclassified:
+            print("[Suggest] No unclassified snapshots found. Returning empty list.")
             return {
                 "status": "success",
                 "suggestions": [],
                 "message": "No unclassified screenshots found to generate suggestions."
             }
 
-        # 2. Compile activity details to form the prompt
-        activities = []
+        # 2. Compile activity details to form the prompt (de-duplicated to fit LLM context)
+        seen_activities = {}
         for r in unclassified:
+            app_name = r.get("app_name") or "Unknown App"
+            title = r.get("window_title") or "Untitled Window"
+            norm_key = (app_name.lower(), title[:40].lower())
+            if norm_key not in seen_activities:
+                seen_activities[norm_key] = r
+            else:
+                prev = seen_activities[norm_key]
+                if not prev.get("description") and r.get("description"):
+                    seen_activities[norm_key] = r
+
+        activities = []
+        for r in seen_activities.values():
             app_name = r.get("app_name") or "Unknown App"
             title = r.get("window_title") or "Untitled Window"
             desc = r.get("description") or ""
             unique = r.get("unique_things") or ""
+            for suffix in [" - Google Chrome", " - Visual Studio Code", " - Brave"]:
+                if title.endswith(suffix):
+                    title = title[:-len(suffix)]
             act_str = f"- App: {app_name} | Window: {title}"
-            if desc:
-                act_str += f" | Description: {desc}"
-            if unique:
-                act_str += f" | Unique Elements: {unique}"
+            if desc and desc.lower() != "none":
+                act_str += f" | Description: {desc[:120]}"
+            if unique and unique.lower() != "none":
+                act_str += f" | Unique Elements: {unique[:120]}"
             activities.append(act_str)
 
         activities_text = "\n".join(activities)
@@ -502,6 +519,7 @@ You must respond in valid JSON format matching this exact schema:
 
         # 3. Determine provider
         provider = settings_store.get("provider")
+        print(f"[Suggest] Resolved provider: {provider}")
         suggestions_data = []
 
         if provider == "gemini":
@@ -523,7 +541,8 @@ You must respond in valid JSON format matching this exact schema:
                 candidates = data.get("candidates", [])
                 if candidates:
                     text_output = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-                    parsed = json.loads(text_output)
+                    from aw_vision.tooling import extract_json_object
+                    parsed = json.loads(extract_json_object(text_output))
                     suggestions_data = parsed.get("suggestions", [])
             else:
                 # Fallback to Ollama if offline
@@ -545,7 +564,8 @@ You must respond in valid JSON format matching this exact schema:
             resp = requests.post(url, json=payload, timeout=60.0)
             if resp.status_code == 200:
                 text_output = resp.json().get("response", "").strip()
-                parsed = json.loads(text_output)
+                from aw_vision.tooling import extract_json_object
+                parsed = json.loads(extract_json_object(text_output))
                 suggestions_data = parsed.get("suggestions", [])
             else:
                 raise HTTPException(status_code=500, detail=f"Ollama suggestions generation failed: {resp.status_code} - {resp.text}")
@@ -553,6 +573,8 @@ You must respond in valid JSON format matching this exact schema:
         # Ensure all suggestions have is_active = True
         for sugg in suggestions_data:
             sugg["is_active"] = True
+
+        print(f"[Suggest] Generated suggestions: {suggestions_data}")
 
         return {
             "status": "success",
