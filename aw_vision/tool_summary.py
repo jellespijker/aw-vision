@@ -84,43 +84,87 @@ def caveman_compress_text(text: str) -> str:
 def programmatic_compress_records(raw_result: str, max_full_records: int = 5, max_total_records: int = 15) -> str:
     """Programmatically compress a list of formatted records to fit within limits.
 
-    Keeps the first N records in full. For any subsequent records, keeps only the header
-    line (containing timestamp, App, and Window) to provide a compact high-level timeline.
-    Caps the total number of records at max_total_records to avoid context bloating.
+    Uses progressive resolution thinning:
+    1. Keeps the first `max_full_records` in full detail.
+    2. Keeps the next `max_total_records` with header + description (stripping heavy OCR/tags).
+    3. Keeps subsequent records up to 50 as header-only lines.
+    4. For unstructured text without records, uses Head-Tail Truncation.
     """
     lines = raw_result.splitlines()
     compressed_lines = []
-    record_count = 0
-    in_sub_fields = False
+
+    # Check if there are structured records
     has_records = False
-    skipped_count = 0
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("- [") or stripped.startswith("--- Result") or stripped.startswith("--- Record"):
+            has_records = True
+            break
+
+    if not has_records:
+        # Head-Tail Truncation for unstructured text
+        max_chars = 3000
+        if len(raw_result) <= max_chars:
+            return raw_result
+        half = max_chars // 2
+        head = raw_result[:half]
+        tail = raw_result[-half:]
+        return f"{head}\n\n... [Truncated {len(raw_result) - max_chars} characters programmatically to fit context limit] ...\n\n{tail}"
+
+    # Process structured records
+    record_count = 0
+    max_headers_limit = 50
+
+    current_record_lines = []
+
+    def flush_record(rec_lines, rec_idx):
+        if not rec_lines:
+            return []
+
+        header = rec_lines[0]
+        body = rec_lines[1:]
+
+        if rec_idx <= max_full_records:
+            # Full detail
+            return rec_lines
+        elif rec_idx <= max_total_records:
+            # Header + Desc (strip OCR, Tags, etc.)
+            desc_line = None
+            for b in body:
+                if b.strip().startswith("Desc:"):
+                    desc_line = b
+                    break
+            if desc_line:
+                return [header, desc_line]
+            return [header]
+        elif rec_idx <= max_headers_limit:
+            # Header only
+            return [header]
+        else:
+            # Skipped
+            return []
 
     for line in lines:
         stripped = line.strip()
-        # Detect records
         is_header = stripped.startswith("- [") or stripped.startswith("--- Result") or stripped.startswith("--- Record")
         if is_header:
-            has_records = True
+            if current_record_lines:
+                compressed_lines.extend(flush_record(current_record_lines, record_count))
             record_count += 1
-            if record_count > max_total_records:
-                skipped_count += 1
-                continue
-            in_sub_fields = record_count > max_full_records
-            compressed_lines.append(line)
-        elif in_sub_fields:
-            # Skip Desc, OCR, Tags lines for records beyond max_full_records
-            continue
+            current_record_lines = [line]
         else:
-            if record_count > max_total_records:
-                continue
-            compressed_lines.append(line)
+            if record_count > 0:
+                current_record_lines.append(line)
+            else:
+                # Preamble lines before the first record
+                compressed_lines.append(line)
 
-    if skipped_count > 0:
+    if current_record_lines:
+        compressed_lines.extend(flush_record(current_record_lines, record_count))
+
+    if record_count > max_headers_limit:
+        skipped_count = record_count - max_headers_limit
         compressed_lines.append(f"\n  ... [{skipped_count} more chronological records omitted to fit context limit; query a narrower timeframe for full detail]")
-
-    if not has_records:
-        # If it's some other tool output (like GitHub/Jira/project config), just truncate to safe size
-        return raw_result[:3000] + "\n\n... [Truncated programmatically to 3000 chars]"
 
     return "\n".join(compressed_lines)
 

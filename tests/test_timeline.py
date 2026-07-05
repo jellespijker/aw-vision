@@ -129,3 +129,62 @@ def test_divide_and_conquer_compress(monkeypatch):
         result = divide_and_conquer_compress("test_tool", long_input)
         assert len(mock_calls) >= 2
         assert "Summary:" in result
+
+
+def test_programmatic_compress_records():
+    from aw_vision.tool_summary import programmatic_compress_records
+
+    # 1. Unstructured text - Verify head-tail truncation
+    long_unstructured = "A" * 4000
+    compressed_unstructured = programmatic_compress_records(long_unstructured)
+    assert "[Truncated" in compressed_unstructured
+    assert len(compressed_unstructured) < 3200
+    assert compressed_unstructured.startswith("A" * 1500)
+    assert compressed_unstructured.endswith("A" * 1500)
+
+    # 2. Structured records - Verify progressive resolution thinning
+    # 6 records (limit: max_full=2, max_total=4)
+    structured_input = (
+        "- [09:00] Firefox | Reading docs\n"
+        "  Desc: Firefox reading python docs\n"
+        "  OCR: hello world text\n"
+        "  Tags: web | Proj: PRJ-1\n"
+        "- [09:01] Firefox | Reading more docs\n"
+        "  Desc: Firefox reading more python docs\n"
+        "  OCR: hello universe text\n"
+        "  Tags: web | Proj: PRJ-1\n"
+        "- [09:02] VS Code | Coding\n"
+        "  Desc: VS Code editing timeline.py\n"
+        "  OCR: def compress_timeline_records\n"
+        "  Tags: code | Proj: PRJ-1\n"
+        "- [09:03] VS Code | Debugging\n"
+        "  Desc: VS Code running pytest\n"
+        "  OCR: collected 4 items\n"
+        "  Tags: code | Proj: PRJ-1\n"
+        "- [09:04] Slack | Chatting\n"
+        "  Desc: Slack talking to team\n"
+        "  OCR: status updates\n"
+        "  Tags: chat | Proj: PRJ-2\n"
+        "- [09:05] Spotify | Listening to music\n"
+        "  Desc: Spotify playing lofi\n"
+        "  OCR: N/A\n"
+        "  Tags: music | Proj: PRJ-3"
+    )
+
+    # With max_full=2 and max_total=4 (max_headers_limit is 50, so up to 50 kept as header-only)
+    compressed_structured = programmatic_compress_records(structured_input, max_full_records=2, max_total_records=4)
+
+    # Record 1 (full detail)
+    assert "- [09:00] Firefox | Reading docs" in compressed_structured
+    assert "  Desc: Firefox reading python docs" in compressed_structured
+    assert "  OCR: hello world text" in compressed_structured
+
+    # Record 3 (max_full < index <= max_total: header + desc only)
+    assert "- [09:02] VS Code | Coding" in compressed_structured
+    assert "  Desc: VS Code editing timeline.py" in compressed_structured
+    assert "  OCR: def compress_timeline_records" not in compressed_structured
+
+    # Record 5 (index > max_total: header only)
+    assert "- [09:04] Slack | Chatting" in compressed_structured
+    assert "  Desc: Slack talking to team" not in compressed_structured
+    assert "  OCR: status updates" not in compressed_structured
