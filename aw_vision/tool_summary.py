@@ -81,17 +81,19 @@ def caveman_compress_text(text: str) -> str:
     return " | ".join(compressed_lines)
 
 
-def programmatic_compress_records(raw_result: str, max_full_records: int = 5) -> str:
+def programmatic_compress_records(raw_result: str, max_full_records: int = 5, max_total_records: int = 15) -> str:
     """Programmatically compress a list of formatted records to fit within limits.
 
     Keeps the first N records in full. For any subsequent records, keeps only the header
     line (containing timestamp, App, and Window) to provide a compact high-level timeline.
+    Caps the total number of records at max_total_records to avoid context bloating.
     """
     lines = raw_result.splitlines()
     compressed_lines = []
     record_count = 0
     in_sub_fields = False
     has_records = False
+    skipped_count = 0
 
     for line in lines:
         stripped = line.strip()
@@ -100,13 +102,21 @@ def programmatic_compress_records(raw_result: str, max_full_records: int = 5) ->
         if is_header:
             has_records = True
             record_count += 1
+            if record_count > max_total_records:
+                skipped_count += 1
+                continue
             in_sub_fields = record_count > max_full_records
             compressed_lines.append(line)
         elif in_sub_fields:
             # Skip Desc, OCR, Tags lines for records beyond max_full_records
             continue
         else:
+            if record_count > max_total_records:
+                continue
             compressed_lines.append(line)
+
+    if skipped_count > 0:
+        compressed_lines.append(f"\n  ... [{skipped_count} more chronological records omitted to fit context limit; query a narrower timeframe for full detail]")
 
     if not has_records:
         # If it's some other tool output (like GitHub/Jira/project config), just truncate to safe size
