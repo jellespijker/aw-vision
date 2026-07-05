@@ -397,14 +397,13 @@ def tool_get_activity_for_timeframe(arg: str) -> str:
 
     output.append("")
     output.append("Chronological timeline:")
-    for r in active:
-        dt = datetime.fromtimestamp(r.get("timestamp", 0)).strftime("%H:%M")
-        ocr_text = caveman_compress_text(r.get("ocr_text", "N/A") or "N/A")
-        if len(ocr_text) > 120:
-            ocr_text = ocr_text[:120].strip() + "..."
+    from aw_vision.timeline import compress_timeline_records
+
+    grouped_timeline = compress_timeline_records(active, config.screenshot_interval)
+    for item in grouped_timeline:
         output.append(
-            f"- [{dt}] {r.get('app_name')} | {r.get('window_title')}: {r.get('description')} "
-            f"(Proj: {r.get('project_number')})"
+            f"- [{item['ranges_str']}] {item['app_name']} | {item['description']} "
+            f"({item['project_number']})"
         )
     return "\n".join(output)
 

@@ -139,6 +139,18 @@ Format each unique activity strictly as:
 Raw Desktop Records:
 {raw_result[:20000]}
 """
+    elif tool_name == "get_activity_for_timeframe":
+        prompt = f"""
+You are a highly efficient assistant. Your task is to compress the following chronological activity timeline into a highly dense chronological log.
+Keep each unique activity with a short description of what was being done.
+Omit repetitive consecutive lines if they represent the exact same task with no progress or change, but keep unique transitions.
+Ensure the output reads as a clear, dense timeline of actions, so the main agent can see exactly what was worked on.
+Format each unique activity strictly as:
+- [TimeRanges] AppName | Short Description (ProjectKey)
+
+Raw Activity Timeline:
+{raw_result[:20000]}
+"""
     elif tool_name == "search_screenshots_semantic":
         prompt = f"""
 You are a highly efficient assistant. Your task is to compress the following semantic search results into a highly dense summary of matching events.
@@ -185,5 +197,8 @@ Raw Tool Output:
         print(f"Error/timeout in tool result summarizer: {e}. Falling back to programmatic compression.")
 
     # Programmatic compression fallback
-    compressed = programmatic_compress_records(raw_result, max_full_records=4)
+    if tool_name == "get_activity_for_timeframe":
+        compressed = programmatic_compress_records(raw_result, max_full_records=30, max_total_records=50)
+    else:
+        compressed = programmatic_compress_records(raw_result, max_full_records=4)
     return f"[Programmatically compressed to fit context limit]\n{compressed}"
