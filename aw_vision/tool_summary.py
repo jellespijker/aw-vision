@@ -178,10 +178,10 @@ def divide_and_conquer_compress(tool_name: str, raw_result: str, depth: int = 0)
         return raw_result
 
     if depth >= 2:
-        print("Max depth reached in divide_and_conquer_compress. Falling back to programmatic compression.")
+        print("[Summarizer] Max depth reached in divide_and_conquer_compress. Falling back to programmatic compression.")
         return programmatic_compress_records(raw_result, max_full_records=3, max_total_records=10)
 
-    print(f"Compressing {tool_name} output using divide-and-conquer (size: {len(raw_result)} chars, depth: {depth})...")
+    print(f"[Summarizer] Compressing {tool_name} output using divide-and-conquer (size: {len(raw_result)} chars, depth: {depth})...")
 
     # Split into lines
     lines = raw_result.splitlines()
@@ -202,15 +202,15 @@ def divide_and_conquer_compress(tool_name: str, raw_result: str, depth: int = 0)
     if current_chunk:
         chunks.append("\n".join(current_chunk))
 
-    # If we only have 1 chunk, we can't divide it further without line splitting.
-    # To avoid destructive truncation, hard-split by character count into chunks.
-    if len(chunks) <= 1:
+    # If we only have 1 chunk OR if any individual line chunk exceeds max_chunk,
+    # hard-split by character count to guarantee strictly bounded chunks.
+    if len(chunks) <= 1 or any(len(c) > max_chunk for c in chunks):
         chunks = [raw_result[i:i + max_chunk] for i in range(0, len(raw_result), max_chunk)]
 
     # Summarize each chunk
     summarized_chunks = []
     for idx, chunk in enumerate(chunks):
-        print(f"  Summarizing chunk {idx + 1}/{len(chunks)} of size {len(chunk)}...")
+        print(f"[Summarizer]   Summarizing chunk {idx + 1}/{len(chunks)} of size {len(chunk)}...")
         chunk_summary = _summarize_chunk(tool_name, chunk)
         summarized_chunks.append(chunk_summary)
 
@@ -252,11 +252,11 @@ Raw Chunk Content:
             if len(summary) >= 30:
                 return summary
             else:
-                print(f"Ollama returned too-short chunk response ({len(summary)} chars). Falling back to programmatic compression.")
+                print(f"[Summarizer] Ollama returned too-short chunk response ({len(summary)} chars). Falling back to programmatic compression.")
         else:
-            print(f"Ollama returned chunk status {resp.status_code}. Falling back to programmatic compression.")
+            print(f"[Summarizer] Ollama returned chunk status {resp.status_code}. Falling back to programmatic compression.")
     except Exception as e:
-        print(f"Error/timeout in chunk summarizer: {e}. Falling back to programmatic compression.")
+        print(f"[Summarizer] Error/timeout in chunk summarizer: {e}. Falling back to programmatic compression.")
 
     # Programmatic compression fallback for this single chunk
     return programmatic_compress_records(chunk_content, max_full_records=3, max_total_records=10)
@@ -328,12 +328,12 @@ Raw Tool Output:
                 return f"[Compressed representation of {tool_name} results]\n{summary}"
             else:
                 print(
-                    f"Ollama returned empty or too-short response ({len(summary)} chars). Falling back to programmatic compression."
+                    f"[Summarizer] Ollama returned empty or too-short response ({len(summary)} chars). Falling back to programmatic compression."
                 )
         else:
-            print(f"Ollama returned status {resp.status_code}. Falling back to programmatic compression.")
+            print(f"[Summarizer] Ollama returned status {resp.status_code}. Falling back to programmatic compression.")
     except Exception as e:
-        print(f"Error/timeout in tool result summarizer: {e}. Falling back to programmatic compression.")
+        print(f"[Summarizer] Error/timeout in tool result summarizer: {e}. Falling back to programmatic compression.")
 
     # Programmatic compression fallback
     if tool_name == "get_activity_for_timeframe":

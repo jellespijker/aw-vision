@@ -228,7 +228,7 @@ def test_summarize_ocr_text_progressive_thinning():
     # 3. Very tight limit, should only fit head + omitted
     res_tight = mixin.summarize_ocr_text(ocr_long, max_chars=35)
     assert "omitted" in res_tight
-    assert "Heading" in res
+    assert "Heading" in res_tight
     assert "Status" not in res_tight
 
 
