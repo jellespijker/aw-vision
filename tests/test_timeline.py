@@ -208,3 +208,62 @@ def test_programmatic_compress_records():
     assert "- [09:04] Slack | Chatting" in compressed_structured
     assert "  Desc: Slack talking to team" not in compressed_structured
     assert "  OCR: status updates" not in compressed_structured
+
+
+def test_summarize_ocr_text_progressive_thinning():
+    from aw_vision.processor.ocr import OcrMixin
+    mixin = OcrMixin()
+
+    # 1. Fits within character limit
+    ocr_text = "Line 1\nLine 2\nLine 3"
+    assert mixin.summarize_ocr_text(ocr_text, max_chars=100) == "Line 1 | Line 2 | Line 3"
+
+    # 2. Exceeds limit, should apply head-tail thinning
+    ocr_long = "Heading\nFile Edit\nrepetitive line\nanother repet\nFooter Status"
+    res = mixin.summarize_ocr_text(ocr_long, max_chars=60)
+    assert "omitted" in res
+    assert "Heading" in res
+    assert "Status" in res
+
+    # 3. Very tight limit, should only fit head + omitted
+    res_tight = mixin.summarize_ocr_text(ocr_long, max_chars=35)
+    assert "omitted" in res_tight
+    assert "Heading" in res
+    assert "Status" not in res_tight
+
+
+def test_build_similar_snapshots_context_thinning(monkeypatch):
+    from unittest.mock import MagicMock
+    from aw_vision.processor.history_context import build_similar_snapshots_context
+    from aw_vision.db import db
+    import json
+
+    mock_record = {
+        "app_name": "Terminal",
+        "window_title": "Running tests",
+        "description": "Executed pytest successfully",
+        "project_number": "PRJ-2026-042",
+        "human_labeled": True,
+        # Heavy fields to be thinned out:
+        "ocr_text": "A" * 1000,
+        "project_reasoning": "Matching keywords present...",
+        "vector": [0.1] * 384,
+    }
+
+    monkeypatch.setattr(db, "get_similar_labeled_snapshots_by_metadata", MagicMock(return_value=[mock_record]))
+
+    result_json = build_similar_snapshots_context("Terminal", "Running tests")
+    result_data = json.loads(result_json)
+
+    assert len(result_data) == 1
+    item = result_data[0]
+    assert item["app_name"] == "Terminal"
+    assert item["window_title"] == "Running tests"
+    assert item["description"] == "Executed pytest successfully"
+    assert item["project_number"] == "PRJ-2026-042"
+    assert item["human_labeled"] is True
+
+    # Assert heavy fields were successfully thinned out
+    assert "ocr_text" not in item
+    assert "project_reasoning" not in item
+    assert "vector" not in item

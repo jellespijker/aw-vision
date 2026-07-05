@@ -42,21 +42,68 @@ class OcrMixin:
             return ""
 
     def summarize_ocr_text(self, ocr_text: str, max_chars: int = 1200) -> str:
-        """Pre-process, compress using Caveman style, and truncate OCR text to fit within constraints."""
+        """Pre-process, compress using Caveman style, and progressively thin OCR text to fit constraints."""
         if not ocr_text:
             return ""
 
-        compressed = caveman_compress_text(ocr_text)
-        if len(compressed) <= max_chars:
-            return compressed
+        # Compress lines using caveman logic but keep them as a list of lines
+        raw_lines = [line.strip() for line in ocr_text.splitlines() if line.strip()]
+        filler_words = {
+            "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been", "being",
+            "to", "of", "in", "on", "at", "by", "for", "with", "about", "against", "between", "into",
+            "through", "during", "before", "after", "above", "below", "from", "up", "down", "in", "out",
+            "off", "over", "under", "again", "further", "then", "once"
+        }
 
-        # Truncate and append truncation message
-        truncated = compressed[:max_chars]
-        last_pipe = truncated.rfind(" | ")
-        if last_pipe > max_chars // 2:
-            truncated = truncated[:last_pipe]
+        compressed_lines = []
+        seen = set()
+        for line in raw_lines:
+            words = line.split()
+            compressed_words = [w for w in words if w.lower() not in filler_words]
+            if compressed_words:
+                compressed_line = " ".join(compressed_words)
+                norm = compressed_line.lower()
+                if norm not in seen:
+                    seen.add(norm)
+                    compressed_lines.append(compressed_line)
 
-        return truncated + f" ... [OCR Text truncated from {len(compressed)} to {len(truncated)} chars]"
+        joined = " | ".join(compressed_lines)
+        if len(joined) <= max_chars:
+            return joined
+
+        # Progressive head-tail line thinning
+        head_count = len(compressed_lines) // 2
+        tail_count = len(compressed_lines) - head_count
+
+        while head_count + tail_count > 0:
+            head_part = compressed_lines[:head_count]
+            tail_part = compressed_lines[-tail_count:] if tail_count > 0 else []
+
+            omitted = len(compressed_lines) - (head_count + tail_count)
+
+            parts = []
+            if head_part:
+                parts.append(" | ".join(head_part))
+            if omitted > 0:
+                parts.append(f"... [{omitted} lines omitted] ...")
+            if tail_part:
+                parts.append(" | ".join(tail_part))
+
+            candidate = " | ".join(parts)
+
+            if len(candidate) <= max_chars:
+                return candidate
+
+            # Progressively shrink counts
+            if head_count > tail_count:
+                head_count -= 1
+            elif tail_count > 0:
+                tail_count -= 1
+            else:
+                head_count -= 1
+
+        # Worst-case fallback character truncation
+        return joined[:max_chars] + f" ... [OCR Text truncated from {len(joined)} to {max_chars} chars]"
 
     def optimize_image(self, img_path: Path, rec_id: str, max_size: int = 1200):
         """Resize image to a maximum dimension of max_size maintaining aspect ratio, saving disk space and speeding up vision/OCR models."""
