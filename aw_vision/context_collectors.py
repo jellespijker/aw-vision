@@ -149,12 +149,15 @@ def normalize_with_llm(raw_output: str, source: Dict[str, Any]) -> List[External
 
     if not raw_output:
         return []
+    from aw_vision.tool_summary import divide_and_conquer_compress
+    compressed_raw = divide_and_conquer_compress("context_source", raw_output)
+
     prompt = render_prompt(
         prompt_store.get("context_normalizer"),
         {
             "kind": source.get("kind", "other"),
             "provider_label": source.get("provider_label") or source.get("name", ""),
-            "raw_output": raw_output[:12000],
+            "raw_output": compressed_raw,
         },
     )
     resp = requests.post(

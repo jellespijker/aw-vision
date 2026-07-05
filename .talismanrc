@@ -30,7 +30,7 @@ fileignoreconfig:
 - filename: frontend/package-lock.json
   checksum: ca2767758ead2cdb15866f3a322a0e6813c79b1f68e03d30d5b32b6d097f9c04
 - filename: aw_vision/settings.py
-  checksum: aa4a6481499d1fa36a820336d2a1196ab88ad75a230b5380292bd011478a6c1d
+  checksum: 8a0ba9c99ddf067dd4436163572e36e4df07f270803b0ad45d2ef096d2b49921
 - filename: aw_vision/gemini.py
   checksum: e1fd009f0d8bcc0b4d3849eeb9a964b02be0e50c92d58498520589a94cf2d04d
 - filename: frontend/src/components/SettingsTab.tsx
@@ -93,4 +93,8 @@ fileignoreconfig:
   checksum: 04dcdf1e00431f2307ab5de2a73a355167f91880cf2291523da8f5461e011f3d
 - filename: aw_vision/timeline.py
   checksum: 4f52840ee414eabe8936165e346081939a233bd5fb9e8ebb4070af8f04205955
+- filename: tests/test_timeline.py
+  checksum: d22f1f09b9464f62ebbfbf2b2f6910bd1904815eeda379db552091b31ec9300c
+- filename: frontend/src/components/CaptureSettings.tsx
+  checksum: bb6e6776af18190a7e599d0928b494d1a5f536fe57cf758e5313729967b84529
 version: ""

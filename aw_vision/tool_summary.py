@@ -125,8 +125,99 @@ def programmatic_compress_records(raw_result: str, max_full_records: int = 5, ma
     return "\n".join(compressed_lines)
 
 
+def divide_and_conquer_compress(tool_name: str, raw_result: str, depth: int = 0) -> str:
+    """Compress raw_result using a divide-and-conquer strategy when it exceeds limits."""
+    from aw_vision.settings import settings_store
+
+    max_chunk = settings_store.get_int("max_summarize_chunk_chars") or 15000
+    if len(raw_result) <= max_chunk or depth >= 2:
+        return raw_result
+
+    print(f"Compressing {tool_name} output using divide-and-conquer (size: {len(raw_result)} chars, depth: {depth})...")
+
+    # Split into lines
+    lines = raw_result.splitlines()
+    chunks = []
+    current_chunk = []
+    current_len = 0
+
+    for line in lines:
+        line_len = len(line) + 1  # count newline
+        if current_len + line_len > max_chunk and current_chunk:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = [line]
+            current_len = line_len
+        else:
+            current_chunk.append(line)
+            current_len += line_len
+
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+
+    # If we only have 1 chunk, we can't divide it further without line splitting,
+    # so just return raw_result up to safe limit
+    if len(chunks) <= 1:
+        return raw_result[:max_chunk]
+
+    # Summarize each chunk
+    summarized_chunks = []
+    for idx, chunk in enumerate(chunks):
+        print(f"  Summarizing chunk {idx + 1}/{len(chunks)} of size {len(chunk)}...")
+        chunk_summary = _summarize_chunk(tool_name, chunk)
+        summarized_chunks.append(chunk_summary)
+
+    combined = "\n".join(summarized_chunks)
+
+    # If the combined summary is still too large, compress it recursively
+    if len(combined) > max_chunk:
+        return divide_and_conquer_compress(tool_name, combined, depth + 1)
+
+    return combined
+
+
+def _summarize_chunk(tool_name: str, chunk_content: str) -> str:
+    """Summarize a single chunk of tool result using local Ollama model, falling back to programmatic."""
+    prompt = f"""
+You are a highly efficient text-compression sub-agent.
+Your task is to summarize the following chunk of raw tool output from '{tool_name}' into a highly dense, structured summary.
+Keep all unique actions, App names, files, timestamps, and findings.
+Do not omit key transitions or critical information.
+Format your response using compact bullet points. Omit all polite or introductory filler text.
+
+Raw Chunk Content:
+{chunk_content}
+"""
+    try:
+        from aw_vision.settings import settings_store
+
+        url = f"{config.ollama_host}/api/generate"
+        payload = {
+            "model": config.vision_model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.1, "num_ctx": settings_store.get_int("ollama_context_size") or 8192},
+            "keep_alive": 0,
+        }
+        resp = requests.post(url, json=payload, timeout=25.0)
+        if resp.status_code == 200:
+            summary = resp.json().get("response", "").strip()
+            if len(summary) >= 30:
+                return summary
+            else:
+                print(f"Ollama returned too-short chunk response ({len(summary)} chars). Falling back to programmatic compression.")
+        else:
+            print(f"Ollama returned chunk status {resp.status_code}. Falling back to programmatic compression.")
+    except Exception as e:
+        print(f"Error/timeout in chunk summarizer: {e}. Falling back to programmatic compression.")
+
+    # Programmatic compression fallback for this single chunk
+    return programmatic_compress_records(chunk_content, max_full_records=3, max_total_records=10)
+
+
 def summarize_tool_result(tool_name: str, raw_result: str) -> str:
     """Summarize a large tool result into a dense technical overview."""
+    compressed_raw = divide_and_conquer_compress(tool_name, raw_result)
+
     if tool_name == "get_recent_screenshots":
         prompt = f"""
 You are a highly efficient assistant. Your task is to compress the following list of desktop records into a highly dense chronological timeline of the user's activities.
@@ -137,7 +228,7 @@ Format each unique activity strictly as:
 - [Time] AppName | WindowTitle: Description summary (OCR keywords)
 
 Raw Desktop Records:
-{raw_result[:20000]}
+{compressed_raw}
 """
     elif tool_name == "get_activity_for_timeframe":
         prompt = f"""
@@ -149,7 +240,7 @@ Format each unique activity strictly as:
 - [TimeRanges] AppName | Short Description (ProjectKey)
 
 Raw Activity Timeline:
-{raw_result[:20000]}
+{compressed_raw}
 """
     elif tool_name == "search_screenshots_semantic":
         prompt = f"""
@@ -158,7 +249,7 @@ Highlight the most relevant matches, their apps/window titles, descriptions, and
 Ensure the main agent gets all the specific, fine-grained details needed to answer the user's query.
 
 Raw Search Results:
-{raw_result[:20000]}
+{compressed_raw}
 """
     else:
         prompt = f"""
@@ -168,7 +259,7 @@ Identify key findings, activities, files, applications, or discussion points.
 Format your response using compact bullet points or semicolons. Omit all polite or introductory filler text.
 
 Raw Tool Output:
-{raw_result[:20000]}
+{compressed_raw}
 """
 
     try:

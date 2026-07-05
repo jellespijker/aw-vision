@@ -98,3 +98,34 @@ def test_compress_timeline_records_grouping():
     # Verify sort order (Firefox first seen at t0, Terminal first seen at t3)
     assert compressed[0]["app_name"] == "Firefox"
     assert compressed[1]["app_name"] == "Terminal"
+
+
+def test_divide_and_conquer_compress(monkeypatch):
+    from unittest.mock import patch
+    from aw_vision.tool_summary import divide_and_conquer_compress
+    from aw_vision.settings import settings_store
+
+    # Mock settings to return a small chunk limit of 50 characters
+    monkeypatch.setattr(settings_store, "get_int", lambda key: 50 if key == "max_summarize_chunk_chars" else 8192)
+
+    # 1. Short input: below max chunk limit, should be returned directly
+    short_input = "Line 1\nLine 2"
+    assert divide_and_conquer_compress("test_tool", short_input) == short_input
+
+    # 2. Long input: split into multiple chunks and summarized
+    long_input = (
+        "Line A is a very long line that exceeds fifty characters\n"
+        "Line B is another long line that also exceeds fifty characters\n"
+        "Line C is also long"
+    )
+
+    mock_calls = []
+
+    def mock_summarize_chunk(tool_name, chunk_content):
+        mock_calls.append(chunk_content)
+        return f"Summary: {chunk_content[:15]}..."
+
+    with patch("aw_vision.tool_summary._summarize_chunk", side_effect=mock_summarize_chunk):
+        result = divide_and_conquer_compress("test_tool", long_input)
+        assert len(mock_calls) >= 2
+        assert "Summary:" in result
