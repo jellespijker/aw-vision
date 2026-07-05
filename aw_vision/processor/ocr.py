@@ -42,21 +42,53 @@ class OcrMixin:
             return ""
 
     def summarize_ocr_text(self, ocr_text: str, max_chars: int = 1200) -> str:
-        """Pre-process, compress using Caveman style, and truncate OCR text to fit within constraints."""
+        """Pre-process, compress using Caveman style, and progressively thin OCR text to fit constraints."""
         if not ocr_text:
             return ""
 
+        # Reuse existing caveman compression utility
         compressed = caveman_compress_text(ocr_text)
         if len(compressed) <= max_chars:
             return compressed
 
-        # Truncate and append truncation message
-        truncated = compressed[:max_chars]
-        last_pipe = truncated.rfind(" | ")
-        if last_pipe > max_chars // 2:
-            truncated = truncated[:last_pipe]
+        # Split the caveman-compressed text back into distinct line tokens
+        compressed_lines = [item.strip() for item in compressed.split(" | ") if item.strip()]
 
-        return truncated + f" ... [OCR Text truncated from {len(compressed)} to {len(truncated)} chars]"
+        # Progressive head-tail line thinning
+        head_count = len(compressed_lines) // 2
+        tail_count = len(compressed_lines) - head_count
+
+        while head_count + tail_count > 0:
+            head_part = compressed_lines[:head_count]
+            tail_part = compressed_lines[-tail_count:] if tail_count > 0 else []
+
+            omitted = len(compressed_lines) - (head_count + tail_count)
+
+            parts = []
+            if head_part:
+                parts.append(" | ".join(head_part))
+            if omitted > 0:
+                parts.append(f"... [{omitted} lines omitted] ...")
+            if tail_part:
+                parts.append(" | ".join(tail_part))
+
+            candidate = " | ".join(parts)
+
+            if len(candidate) <= max_chars:
+                return candidate
+
+            # Progressively shrink counts
+            if head_count > tail_count:
+                head_count -= 1
+            elif tail_count > 0:
+                tail_count -= 1
+            else:
+                head_count -= 1
+
+        # Worst-case fallback character truncation (suffix length accounted for to satisfy contract)
+        suffix = f" ... [OCR Text truncated from {len(compressed)} to {max_chars} chars]"
+        limit = max(0, max_chars - len(suffix))
+        return compressed[:limit] + suffix
 
     def optimize_image(self, img_path: Path, rec_id: str, max_size: int = 1200):
         """Resize image to a maximum dimension of max_size maintaining aspect ratio, saving disk space and speeding up vision/OCR models."""

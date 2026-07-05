@@ -57,7 +57,16 @@ def build_app_frequency_context(app_name: str) -> str:
 def build_similar_snapshots_context(app_name: str, window_title: str, limit: int = 5) -> str:
     """Previously labeled snapshots with matching app/title metadata (no ML models loaded)."""
     similar = db.get_similar_labeled_snapshots_by_metadata(app_name=app_name, window_title=window_title, limit=limit)
-    return json.dumps(similar, ensure_ascii=False)
+    thinned = []
+    for item in similar:
+        thinned.append({
+            "app_name": item.get("app_name"),
+            "window_title": item.get("window_title"),
+            "description": item.get("description"),
+            "project_number": item.get("project_number"),
+            "human_labeled": bool(item.get("human_labeled")),
+        })
+    return json.dumps(thinned, ensure_ascii=False)
 
 
 def build_previous_snapshot_block(timestamp: float) -> str:

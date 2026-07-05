@@ -208,10 +208,8 @@ def test_summarize_ocr_text():
     max_chars = 200
     truncated = processor.summarize_ocr_text(long_text, max_chars=max_chars)
     assert len(truncated) > 0
-    assert " ... [OCR Text truncated" in truncated
-    # Check that it ends before max_chars + truncation message
-    content_part = truncated.split(" ... [OCR Text truncated")[0]
-    assert len(content_part) <= max_chars
+    assert "lines omitted" in truncated
+    assert len(truncated) <= max_chars
 
 
 def test_get_binned_timeline():

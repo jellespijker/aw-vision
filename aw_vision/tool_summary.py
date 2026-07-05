@@ -84,49 +84,188 @@ def caveman_compress_text(text: str) -> str:
 def programmatic_compress_records(raw_result: str, max_full_records: int = 5, max_total_records: int = 15) -> str:
     """Programmatically compress a list of formatted records to fit within limits.
 
-    Keeps the first N records in full. For any subsequent records, keeps only the header
-    line (containing timestamp, App, and Window) to provide a compact high-level timeline.
-    Caps the total number of records at max_total_records to avoid context bloating.
+    Uses progressive resolution thinning:
+    1. Keeps the first `max_full_records` in full detail.
+    2. Keeps the next `max_total_records` with header + description (stripping heavy OCR/tags).
+    3. Keeps subsequent records up to 50 as header-only lines.
+    4. For unstructured text without records, uses Head-Tail Truncation.
     """
     lines = raw_result.splitlines()
     compressed_lines = []
-    record_count = 0
-    in_sub_fields = False
+
+    # Check if there are structured records
     has_records = False
-    skipped_count = 0
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("- [") or stripped.startswith("--- Result") or stripped.startswith("--- Record"):
+            has_records = True
+            break
+
+    if not has_records:
+        # Head-Tail Truncation for unstructured text
+        max_chars = 3000
+        if len(raw_result) <= max_chars:
+            return raw_result
+        half = max_chars // 2
+        head = raw_result[:half]
+        tail = raw_result[-half:]
+        return f"{head}\n\n... [Truncated {len(raw_result) - max_chars} characters programmatically to fit context limit] ...\n\n{tail}"
+
+    # Process structured records
+    record_count = 0
+    max_headers_limit = 50
+
+    current_record_lines = []
+
+    def flush_record(rec_lines, rec_idx):
+        if not rec_lines:
+            return []
+
+        header = rec_lines[0]
+        body = rec_lines[1:]
+
+        if rec_idx <= max_full_records:
+            # Full detail
+            return rec_lines
+        elif rec_idx <= max_total_records:
+            # Header + Desc (strip OCR, Tags, etc.)
+            desc_line = None
+            for b in body:
+                if b.strip().startswith("Desc:"):
+                    desc_line = b
+                    break
+            if desc_line:
+                return [header, desc_line]
+            return [header]
+        elif rec_idx <= max_headers_limit:
+            # Header only
+            return [header]
+        else:
+            # Skipped
+            return []
 
     for line in lines:
         stripped = line.strip()
-        # Detect records
         is_header = stripped.startswith("- [") or stripped.startswith("--- Result") or stripped.startswith("--- Record")
         if is_header:
-            has_records = True
+            if current_record_lines:
+                compressed_lines.extend(flush_record(current_record_lines, record_count))
             record_count += 1
-            if record_count > max_total_records:
-                skipped_count += 1
-                continue
-            in_sub_fields = record_count > max_full_records
-            compressed_lines.append(line)
-        elif in_sub_fields:
-            # Skip Desc, OCR, Tags lines for records beyond max_full_records
-            continue
+            current_record_lines = [line]
         else:
-            if record_count > max_total_records:
-                continue
-            compressed_lines.append(line)
+            if record_count > 0:
+                current_record_lines.append(line)
+            else:
+                # Preamble lines before the first record
+                compressed_lines.append(line)
 
-    if skipped_count > 0:
+    if current_record_lines:
+        compressed_lines.extend(flush_record(current_record_lines, record_count))
+
+    if record_count > max_headers_limit:
+        skipped_count = record_count - max_headers_limit
         compressed_lines.append(f"\n  ... [{skipped_count} more chronological records omitted to fit context limit; query a narrower timeframe for full detail]")
-
-    if not has_records:
-        # If it's some other tool output (like GitHub/Jira/project config), just truncate to safe size
-        return raw_result[:3000] + "\n\n... [Truncated programmatically to 3000 chars]"
 
     return "\n".join(compressed_lines)
 
 
+def divide_and_conquer_compress(tool_name: str, raw_result: str, depth: int = 0) -> str:
+    """Compress raw_result using a divide-and-conquer strategy when it exceeds limits."""
+    from aw_vision.settings import settings_store
+
+    max_chunk = settings_store.get_int("max_summarize_chunk_chars") or 15000
+    if len(raw_result) <= max_chunk:
+        return raw_result
+
+    if depth >= 2:
+        print("[Summarizer] Max depth reached in divide_and_conquer_compress. Falling back to programmatic compression.")
+        return programmatic_compress_records(raw_result, max_full_records=3, max_total_records=10)
+
+    print(f"[Summarizer] Compressing {tool_name} output using divide-and-conquer (size: {len(raw_result)} chars, depth: {depth})...")
+
+    # Split into lines
+    lines = raw_result.splitlines()
+    chunks = []
+    current_chunk = []
+    current_len = 0
+
+    for line in lines:
+        line_len = len(line) + 1  # count newline
+        if current_len + line_len > max_chunk and current_chunk:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = [line]
+            current_len = line_len
+        else:
+            current_chunk.append(line)
+            current_len += line_len
+
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+
+    # If we only have 1 chunk OR if any individual line chunk exceeds max_chunk,
+    # hard-split by character count to guarantee strictly bounded chunks.
+    if len(chunks) <= 1 or any(len(c) > max_chunk for c in chunks):
+        chunks = [raw_result[i:i + max_chunk] for i in range(0, len(raw_result), max_chunk)]
+
+    # Summarize each chunk
+    summarized_chunks = []
+    for idx, chunk in enumerate(chunks):
+        print(f"[Summarizer]   Summarizing chunk {idx + 1}/{len(chunks)} of size {len(chunk)}...")
+        chunk_summary = _summarize_chunk(tool_name, chunk)
+        summarized_chunks.append(chunk_summary)
+
+    combined = "\n".join(summarized_chunks)
+
+    # If the combined summary is still too large, compress it recursively
+    if len(combined) > max_chunk:
+        return divide_and_conquer_compress(tool_name, combined, depth + 1)
+
+    return combined
+
+
+def _summarize_chunk(tool_name: str, chunk_content: str) -> str:
+    """Summarize a single chunk of tool result using local Ollama model, falling back to programmatic."""
+    prompt = f"""
+You are a highly efficient text-compression sub-agent.
+Your task is to summarize the following chunk of raw tool output from '{tool_name}' into a highly dense, structured summary.
+Keep all unique actions, App names, files, timestamps, and findings.
+Do not omit key transitions or critical information.
+Format your response using compact bullet points. Omit all polite or introductory filler text.
+
+Raw Chunk Content:
+{chunk_content}
+"""
+    try:
+        from aw_vision.settings import settings_store
+
+        url = f"{config.ollama_host}/api/generate"
+        payload = {
+            "model": config.vision_model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.1, "num_ctx": settings_store.get_int("ollama_context_size") or 8192},
+            "keep_alive": 0,
+        }
+        resp = requests.post(url, json=payload, timeout=25.0)
+        if resp.status_code == 200:
+            summary = resp.json().get("response", "").strip()
+            if len(summary) >= 30:
+                return summary
+            else:
+                print(f"[Summarizer] Ollama returned too-short chunk response ({len(summary)} chars). Falling back to programmatic compression.")
+        else:
+            print(f"[Summarizer] Ollama returned chunk status {resp.status_code}. Falling back to programmatic compression.")
+    except Exception as e:
+        print(f"[Summarizer] Error/timeout in chunk summarizer: {e}. Falling back to programmatic compression.")
+
+    # Programmatic compression fallback for this single chunk
+    return programmatic_compress_records(chunk_content, max_full_records=3, max_total_records=10)
+
+
 def summarize_tool_result(tool_name: str, raw_result: str) -> str:
     """Summarize a large tool result into a dense technical overview."""
+    compressed_raw = divide_and_conquer_compress(tool_name, raw_result)
+
     if tool_name == "get_recent_screenshots":
         prompt = f"""
 You are a highly efficient assistant. Your task is to compress the following list of desktop records into a highly dense chronological timeline of the user's activities.
@@ -137,7 +276,19 @@ Format each unique activity strictly as:
 - [Time] AppName | WindowTitle: Description summary (OCR keywords)
 
 Raw Desktop Records:
-{raw_result[:20000]}
+{compressed_raw}
+"""
+    elif tool_name == "get_activity_for_timeframe":
+        prompt = f"""
+You are a highly efficient assistant. Your task is to compress the following chronological activity timeline into a highly dense chronological log.
+Keep each unique activity with a short description of what was being done.
+Omit repetitive consecutive lines if they represent the exact same task with no progress or change, but keep unique transitions.
+Ensure the output reads as a clear, dense timeline of actions, so the main agent can see exactly what was worked on.
+Format each unique activity strictly as:
+- [TimeRanges] AppName | Short Description (ProjectKey)
+
+Raw Activity Timeline:
+{compressed_raw}
 """
     elif tool_name == "search_screenshots_semantic":
         prompt = f"""
@@ -146,7 +297,7 @@ Highlight the most relevant matches, their apps/window titles, descriptions, and
 Ensure the main agent gets all the specific, fine-grained details needed to answer the user's query.
 
 Raw Search Results:
-{raw_result[:20000]}
+{compressed_raw}
 """
     else:
         prompt = f"""
@@ -156,7 +307,7 @@ Identify key findings, activities, files, applications, or discussion points.
 Format your response using compact bullet points or semicolons. Omit all polite or introductory filler text.
 
 Raw Tool Output:
-{raw_result[:20000]}
+{compressed_raw}
 """
 
     try:
@@ -177,13 +328,16 @@ Raw Tool Output:
                 return f"[Compressed representation of {tool_name} results]\n{summary}"
             else:
                 print(
-                    f"Ollama returned empty or too-short response ({len(summary)} chars). Falling back to programmatic compression."
+                    f"[Summarizer] Ollama returned empty or too-short response ({len(summary)} chars). Falling back to programmatic compression."
                 )
         else:
-            print(f"Ollama returned status {resp.status_code}. Falling back to programmatic compression.")
+            print(f"[Summarizer] Ollama returned status {resp.status_code}. Falling back to programmatic compression.")
     except Exception as e:
-        print(f"Error/timeout in tool result summarizer: {e}. Falling back to programmatic compression.")
+        print(f"[Summarizer] Error/timeout in tool result summarizer: {e}. Falling back to programmatic compression.")
 
     # Programmatic compression fallback
-    compressed = programmatic_compress_records(raw_result, max_full_records=4)
+    if tool_name == "get_activity_for_timeframe":
+        compressed = programmatic_compress_records(raw_result, max_full_records=30, max_total_records=50)
+    else:
+        compressed = programmatic_compress_records(raw_result, max_full_records=4)
     return f"[Programmatically compressed to fit context limit]\n{compressed}"
