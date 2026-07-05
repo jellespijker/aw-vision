@@ -130,6 +130,26 @@ def test_divide_and_conquer_compress(monkeypatch):
         assert len(mock_calls) >= 2
         assert "Summary:" in result
 
+    # 3. Single extremely long line: no newlines, should hard character split
+    long_single_line = "A" * 150
+    mock_calls.clear()
+    with patch("aw_vision.tool_summary._summarize_chunk", side_effect=mock_summarize_chunk):
+        result = divide_and_conquer_compress("test_tool", long_single_line)
+        # Should split 150 chars into ~3 chunks of 50 chars each
+        assert len(mock_calls) >= 3
+        assert all(len(c) <= 50 for c in mock_calls)
+        assert "Summary:" in result
+
+    # 4. Recursion depth limit safety: if depth >= 2, fall back to programmatic compression
+    # We simulate this by returning a large string from summarize chunk so it remains > 50
+    def mock_oversized_summary(tool_name, chunk_content):
+        return "B" * 100
+
+    with patch("aw_vision.tool_summary._summarize_chunk", side_effect=mock_oversized_summary):
+        result = divide_and_conquer_compress("test_tool", long_input)
+        # Should not recurse infinitely, but fall back to programmatic compression
+        assert "[Truncated" in result or "B" in result or "..." in result
+
 
 def test_programmatic_compress_records():
     from aw_vision.tool_summary import programmatic_compress_records

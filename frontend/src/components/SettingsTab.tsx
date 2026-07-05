@@ -805,8 +805,9 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ showNotification }) =>
                     id="maxSummarizeChunkCharsInput"
                     name="maxSummarizeChunkCharsInput"
                     type="number"
+                    min="1000"
                     value={settings.max_summarize_chunk_chars ?? 15000}
-                    onChange={(e) => handleSettingChange('max_summarize_chunk_chars', parseInt(e.target.value) || 0)}
+                    onChange={(e) => handleSettingChange('max_summarize_chunk_chars', Math.max(1000, parseInt(e.target.value) || 15000))}
                     className="w-full bg-surface-container-low border border-surface-container-high h-11 px-4 rounded text-body-md text-neutral-dark outline-none focus:border-primary font-mono transition-colors"
                   />
                 </div>

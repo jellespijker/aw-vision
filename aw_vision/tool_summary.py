@@ -174,8 +174,12 @@ def divide_and_conquer_compress(tool_name: str, raw_result: str, depth: int = 0)
     from aw_vision.settings import settings_store
 
     max_chunk = settings_store.get_int("max_summarize_chunk_chars") or 15000
-    if len(raw_result) <= max_chunk or depth >= 2:
+    if len(raw_result) <= max_chunk:
         return raw_result
+
+    if depth >= 2:
+        print("Max depth reached in divide_and_conquer_compress. Falling back to programmatic compression.")
+        return programmatic_compress_records(raw_result, max_full_records=3, max_total_records=10)
 
     print(f"Compressing {tool_name} output using divide-and-conquer (size: {len(raw_result)} chars, depth: {depth})...")
 
@@ -198,10 +202,10 @@ def divide_and_conquer_compress(tool_name: str, raw_result: str, depth: int = 0)
     if current_chunk:
         chunks.append("\n".join(current_chunk))
 
-    # If we only have 1 chunk, we can't divide it further without line splitting,
-    # so just return raw_result up to safe limit
+    # If we only have 1 chunk, we can't divide it further without line splitting.
+    # To avoid destructive truncation, hard-split by character count into chunks.
     if len(chunks) <= 1:
-        return raw_result[:max_chunk]
+        chunks = [raw_result[i:i + max_chunk] for i in range(0, len(raw_result), max_chunk)]
 
     # Summarize each chunk
     summarized_chunks = []
