@@ -99,4 +99,6 @@ fileignoreconfig:
   checksum: ae3fc7bc0020179dac74987df925178a89e966891cb49f4d781ea05274d1e896
 - filename: frontend/src/components/CaptureSettings.tsx
   checksum: bb6e6776af18190a7e599d0928b494d1a5f536fe57cf758e5313729967b84529
+- filename: showcase/index.html
+  checksum: 0b5d88115e97642a1be0c6b1369e2495e3d3d5c37c0eb92bf97fdc6199bbb81c
 version: ""

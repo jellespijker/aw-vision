@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>aw-vision - Autonomous Semantic Desktop Memory Engine</title>
+    <meta name="description" content="An AFK-aware, local-first visual and semantic indexing extension for ActivityWatch. Search your desktop history using natural language queries.">
+    
+    <!-- Open Graph Metadata -->
+    <meta property="og:title" content="aw-vision - Autonomous Semantic Desktop Memory Engine">
+    <meta property="og:description" content="A local-first visual and semantic memory assistant for ActivityWatch. Capture, extract, and query your history.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="assets/screenshots/gallery.png">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Background Glow Blobs -->
+    <div class="glow-blob blob-1"></div>
+    <div class="glow-blob blob-2"></div>
+
+    <!-- Navigation Header -->
+    <header class="navbar">
+        <div class="nav-container">
+            <a href="#" class="nav-logo">
+                <span class="logo-icon">👁️</span>
+                <span class="logo-text">aw-vision</span>
+            </a>
+            <nav class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#showcase">Interactive Demo</a>
+                <a href="#privacy">Privacy First</a>
+                <a href="https://github.com/jellespijker/aw-vision" class="btn btn-secondary nav-btn" target="_blank">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="octicon"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                    GitHub
+                </a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-container">
+            <div class="hero-tag">ActivityWatch Visual & Semantic Memory Engine</div>
+            <h1 class="hero-title">Your desktop history,<br><span class="gradient-text">semantically indexed. Local.</span></h1>
+            <p class="hero-subtitle">
+                aw-vision is an autonomous background companion that indexes your active computer sessions, extracts structured text via local OCR, and lets you query your historical memory using natural language.
+            </p>
+            <div class="hero-cta">
+                <a href="#showcase" class="btn btn-primary">See How It Works</a>
+                <a href="https://github.com/jellespijker/aw-vision" class="btn btn-secondary" target="_blank">Install Extension</a>
+            </div>
+            
+            <!-- Hero Mockup Display -->
+            <div class="hero-mockup">
+                <div class="mockup-frame">
+                    <div class="mockup-header">
+                        <div class="dots">
+                            <span class="dot red"></span>
+                            <span class="dot yellow"></span>
+                            <span class="dot green"></span>
+                        </div>
+                        <div class="mockup-title-bar">localhost:5666/gallery</div>
+                    </div>
+                    <div class="mockup-content">
+                        <img src="assets/screenshots/gallery.png" alt="aw-vision Main Gallery Dashboard" class="mockup-img">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <div class="section-container">
+            <div class="section-header">
+                <h2 class="section-title">Designed for Developer Productivity</h2>
+                <p class="section-subtitle">A local-first stack running offline models for 100% data sovereignty.</p>
+            </div>
+            <div class="features-grid">
+                <!-- Feature Card 1 -->
+                <div class="feature-card">
+                    <div class="card-icon">⚡</div>
+                    <h3>AFK-Aware Ingestion Loop</h3>
+                    <p>Monitors active status using ActivityWatch buckets. Ingestion sleeps automatically during AFK cycles to guard CPU resources and disk space.</p>
+                </div>
+                <!-- Feature Card 2 -->
+                <div class="feature-card">
+                    <div class="card-icon">🧠</div>
+                    <h3>Semantic Vector Search</h3>
+                    <p>Commits layout text, visions, and temporal contexts as high-dimensional vectors to LanceDB, offering instantaneous natural language queries.</p>
+                </div>
+                <!-- Feature Card 3 -->
+                <div class="feature-card">
+                    <div class="card-icon">🔎</div>
+                    <h3>Provider-Switchable OCR & Vision</h3>
+                    <p>Supports local offline models (glm-ocr, gemma4) via Ollama, or high-fidelity cloud models via Gemini, fully runtime configurable.</p>
+                </div>
+                <!-- Feature Card 4 -->
+                <div class="feature-card">
+                    <div class="card-icon">🤖</div>
+                    <h3>Autonomous Memory Agent</h3>
+                    <p>A built-in LangGraph ReAct Agent that executes local and external context queries to answer questions about your work history.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Interactive Showcase Section -->
+    <section id="showcase" class="showcase">
+        <div class="section-container">
+            <div class="section-header">
+                <h2 class="section-title">Explore the UI & Workflows</h2>
+                <p class="section-subtitle">Take a tour of the aw-vision developer control center.</p>
+            </div>
+            
+            <div class="showcase-layout">
+                <!-- Tab Controls -->
+                <div class="showcase-nav" id="showcase-nav">
+                    <button class="showcase-tab-btn active" data-tab="gallery">
+                        <span class="tab-icon">🖼️</span>
+                        <div class="tab-label">
+                            <h4>Screenshot Library</h4>
+                            <p>Visual timeline & OCR extraction</p>
+                        </div>
+                    </button>
+                    <button class="showcase-tab-btn" data-tab="projects">
+                        <span class="tab-icon">📊</span>
+                        <div class="tab-label">
+                            <h4>Project Mapping</h4>
+                            <p>Activity timeline & hour aggregates</p>
+                        </div>
+                    </button>
+                    <button class="showcase-tab-btn" data-tab="pipeline">
+                        <span class="tab-icon">⚙️</span>
+                        <div class="tab-label">
+                            <h4>Processing Pipeline</h4>
+                            <p>Three-phase OCR/Vision queue</p>
+                        </div>
+                    </button>
+                    <button class="showcase-tab-btn" data-tab="agent">
+                        <span class="tab-icon">💬</span>
+                        <div class="tab-label">
+                            <h4>Ask Memory Agent</h4>
+                            <p>ReAct loop and tool integration</p>
+                        </div>
+                    </button>
+                    <button class="showcase-tab-btn" data-tab="settings">
+                        <span class="tab-icon">🛠️</span>
+                        <div class="tab-label">
+                            <h4>Customizations</h4>
+                            <p>MCP, Claude Skills & models</p>
+                        </div>
+                    </button>
+                </div>
+
+                <!-- Showcase Media and Description Detail -->
+                <div class="showcase-display">
+                    <div class="display-mockup">
+                        <div class="mockup-frame">
+                            <div class="mockup-header">
+                                <div class="dots">
+                                    <span class="dot red"></span>
+                                    <span class="dot yellow"></span>
+                                    <span class="dot green"></span>
+                                </div>
+                                <div class="mockup-title-bar" id="mockup-url">localhost:5666/gallery</div>
+                            </div>
+                            <div class="mockup-content">
+                                <!-- Slides -->
+                                <div class="showcase-slide active" id="slide-gallery">
+                                    <img src="assets/screenshots/gallery.png" alt="Gallery View">
+                                </div>
+                                <div class="showcase-slide" id="slide-projects">
+                                    <img src="assets/screenshots/projects.png" alt="Projects View">
+                                </div>
+                                <div class="showcase-slide" id="slide-pipeline">
+                                    <img src="assets/screenshots/pipeline.png" alt="Pipeline View">
+                                </div>
+                                <div class="showcase-slide" id="slide-agent">
+                                    <img src="assets/screenshots/agent.png" alt="Agent View">
+                                </div>
+                                <div class="showcase-slide" id="slide-settings">
+                                    <img src="assets/screenshots/settings.png" alt="Settings View">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Slide Details -->
+                    <div class="display-details">
+                        <div class="detail-content active" id="detail-gallery">
+                            <h3>Gallery & Timeline Explorer</h3>
+                            <p>
+                                The central dashboard offers a full chronological stream of your desktop history. Hover or click to open the Lightbox Modal, where you can view raw OCR captures, edit custom user-context notes, and see historical vision analyses grounded in temporal neighbor snapshots.
+                            </p>
+                            <ul class="detail-bullets">
+                                <li><strong>Full OCR Extraction:</strong> Review precise text segments extracted from the screen.</li>
+                                <li><strong>Context Notes:</strong> Annotate snapshots with custom details to guide future classifications.</li>
+                                <li><strong>Time-Machine History:</strong> Effortlessly filter snapshots by app category or active project.</li>
+                            </ul>
+                        </div>
+                        <div class="detail-content" id="detail-projects">
+                            <h3>Smart Project Allocation</h3>
+                            <p>
+                                Analyze your focus times across various workspace project keys. Using both heuristics and deep semantic vision mappings, the pipeline groups screenshots into projects to track your effort automatically.
+                            </p>
+                            <ul class="detail-bullets">
+                                <li><strong>Client Timeline:</strong> A visual chronological breakdown of project segments.</li>
+                                <li><strong>Dynamic Hour Tracking:</strong> Aggregate exact hours spent on specific client keys like <code>PRJ-2026-089</code>.</li>
+                                <li><strong>Bayesian Classification:</strong> Combines app rules with semantic content checks for robust mapping.</li>
+                            </ul>
+                        </div>
+                        <div class="detail-content" id="detail-pipeline">
+                            <h3>Three-Phase Batch Processing</h3>
+                            <p>
+                                The backend coordinates CPU-aware bulk sweeps during idle windows, processing screenshots in sequential stages:
+                            </p>
+                            <ol class="detail-ordered">
+                                <li><strong>Phase 1: OCR Extraction:</strong> Extracts raw code and texts from your captures.</li>
+                                <li><strong>Phase 2: Vision Analysis:</strong> Generates semantic tags, description overlays, and project categorization.</li>
+                                <li><strong>Phase 3: Embedding Commit:</strong> Commits layouts and summaries to LanceDB as vector indices.</li>
+                            </ol>
+                        </div>
+                        <div class="detail-content" id="detail-agent">
+                            <h3>Memory Agent Q&A</h3>
+                            <p>
+                                Leverage the LangGraph ReAct agent to retrieve context instantly. Ask questions like <i>"What was I working on yesterday morning?"</i> or <i>"Find files where I edited the Vite config."</i>
+                            </p>
+                            <ul class="detail-bullets">
+                                <li><strong>Semantic Search Tool:</strong> Scrapes local LanceDB vectors for content matches.</li>
+                                <li><strong>External Integrations:</strong> Connects to MCP servers (GitHub, Jira, etc.) to query files or tickets in parallel.</li>
+                                <li><strong>Guidance Skills:</strong> Inject Claude SKILL.md guidelines into the agent's prompts for structured responses.</li>
+                            </ul>
+                        </div>
+                        <div class="detail-content" id="detail-settings">
+                            <h3>High-Fidelity Customization</h3>
+                            <p>
+                                Customization is built directly into settings. Define local model names, configure prompting templates, manage local/remote Model Context Protocol (MCP) integrations, and upload Claude Skills.
+                            </p>
+                            <ul class="detail-bullets">
+                                <li><strong>Model Settings:</strong> Toggle Ollama or Gemini for OCR, Vision, and Embedding loops.</li>
+                                <li><strong>Skill Management:</strong> Connect expert files dynamically to specific pipeline prompts.</li>
+                                <li><strong>Secured Secrets:</strong> API keys and connection tokens are encrypted with hardware-derived keys.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Privacy & sovereignty Section -->
+    <section id="privacy" class="privacy">
+        <div class="section-container">
+            <div class="privacy-card">
+                <div class="privacy-header">
+                    <span class="shield-icon">🛡️</span>
+                    <h2>Local-First. 100% Private.</h2>
+                </div>
+                <p>
+                    Because desktop captures contain highly sensitive information (credentials, emails, code, documents), aw-vision was built with privacy-by-design principles:
+                </p>
+                <div class="privacy-grid">
+                    <div class="privacy-item">
+                        <h4>Local Processing</h4>
+                        <p>All screenshots are stored locally and processed via offline Ollama models by default. Your data never leaves your device unless you opt-in to cloud services.</p>
+                    </div>
+                    <div class="privacy-item">
+                        <h4>Retention Lifecycle</h4>
+                        <p>Raw and processed image files are automatically pruned from disk after 14 days, protecting storage size and minimizing physical security exposure.</p>
+                    </div>
+                    <div class="privacy-item">
+                        <h4>Permanent Vector Index</h4>
+                        <p>While raw images are wiped to preserve disk space, their text indices, descriptions, and semantic coordinates remain queryable forever in LanceDB.</p>
+                    </div>
+                    <div class="privacy-item">
+                        <h4>Encrypted Credentials</h4>
+                        <p>API keys and credentials for cloud services (like Gemini API) or MCP servers are AES-256 encrypted using a hardware-derived key before saving to disk.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Call to action footer -->
+    <footer class="footer">
+        <div class="footer-container">
+            <div class="footer-brand">
+                <span class="logo-icon">👁️</span>
+                <h3>aw-vision</h3>
+                <p>Advanced Local-First Desktop Memory Indexer for ActivityWatch.</p>
+            </div>
+            <div class="footer-meta">
+                <p>© 2026 aw-vision. Open source under the MIT License.</p>
+                <p>Powered by ActivityWatch, LanceDB, Ollama, and Gemini.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="main.js"></script>
+</body>
+</html>
