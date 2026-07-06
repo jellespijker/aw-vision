@@ -129,6 +129,7 @@ cygdb
 
 # ActivityWatch Local Captured/Temporary screenshots (if stored in-tree)
 *.png
+!showcase/**/*.png
 *.json
 !**/package.json
 !**/package-lock.json
