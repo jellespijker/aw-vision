@@ -58,6 +58,19 @@ def extract_json_object(text: str) -> str:
             return candidate
         except Exception:
             pass
+        try:
+            import ast
+            parsed = ast.literal_eval(candidate)
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(parsed)
+        except Exception:
+            pass
+        try:
+            substituted = candidate.replace("'", '"')
+            json.loads(substituted)
+            return substituted
+        except Exception:
+            pass
     return "{}"
 
 
